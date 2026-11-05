@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Graded Card Pricer</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo">◆</span>
+      <span>Graded Card Pricer</span>
+      <a class="icon-btn" href="options.html" target="_blank" title="Settings">⚙</a>
+    </div>
+
+    <form id="searchForm" class="search">
+      <input id="q" type="text" placeholder="e.g. Charizard 4/102 Base Set PSA 10" autocomplete="off" spellcheck="false">
+      <button type="submit" class="primary">Price</button>
+    </form>
+
+    <div class="detected">
+      <div class="detected-head">
+        <span id="detectedLabel">Cards found on this page</span>
+        <button id="scanBtn" class="ghost" type="button">Scan page</button>
+      </div>
+      <div id="chips" class="chips"><span class="muted">Nothing detected yet.</span></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary" id="summary" hidden>
+      <div class="summary-head">
+        <div>
+          <div class="eyebrow">Average sold price</div>
+          <div id="summaryTitle" class="summary-title"></div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="trim" checked> Trim outliers</label>
+      </div>
+      <div class="tiles" id="tiles"></div>
+      <div class="chart-wrap">
+        <svg id="chart" role="img" aria-label="Sales over the last 7 days"></svg>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="foot muted" id="summaryFoot"></div>
+    </section>
+
+    <section class="platforms" id="platforms"></section>
+
+    <section class="empty" id="empty">
+      <div class="empty-icon">◆</div>
+      <p><strong>Open an email or listing that mentions a graded card</strong> (e.g. “Umbreon VMAX 215/203 PSA 10”) and it will appear above. You can also type a card, or highlight text and right-click → <em>Price graded card</em>.</p>
+    </section>
+  </main>
+
+  <template id="platformTpl">
+    <article class="pcard">
+      <header>
+        <span class="pbadge"></span>
+        <div class="pname"><strong></strong><small></small></div>
+        <span class="status"></span>
+      </header>
+      <div class="pstats"></div>
+      <ol class="sales"></ol>
+      <div class="mini" hidden><iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
+      <footer>
+        <label class="toggle small"><input type="checkbox" class="include" checked> In average</label>
+        <button class="ghost live" type="button">Mini view</button>
+        <a class="open" target="_blank" rel="noopener">Open ↗</a>
+      </footer>
+    </article>
+  </template>
+
+  <script src="detect.js"></script>
+  <script src="platforms.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

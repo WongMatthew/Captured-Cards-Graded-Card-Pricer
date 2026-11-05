@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Graded Card Pricer · Settings</title>
+  <link rel="stylesheet" href="sidepanel.css">
+  <style>
+    body { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+    h1 { font-size: 18px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 24px; }
+    .row { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .row input[type=text] { flex: 1; min-width: 0; height: 30px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; background: var(--panel); color: var(--text); font: 12px ui-monospace, monospace; }
+    .row .name { width: 110px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+    #saved { color: var(--up); margin-left: 10px; }
+    p.help { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <h1>Graded Card Pricer · Settings</h1>
+  <h2>Behavior</h2>
+  <label class="row"><input type="checkbox" id="autoScan"> Automatically scan pages and emails for graded cards</label>
+  <label class="row"><input type="checkbox" id="autoSearch"> Automatically price the first card detected on the page</label>
+  <label class="row"><input type="checkbox" id="trimOutliers"> Trim outliers (lots, mislabeled listings) from averages by default</label>
+  <h2>Platforms</h2>
+  <p class="help"><code>{q}</code> is replaced with the search text. Alt and Collectr have no public sold-price API, so they open as embedded mini views and the extension reads prices from the page. If one of those sites changes its search URL, update it here.</p>
+  <div id="platforms"></div>
+  <p><button class="primary" id="save" style="height:32px">Save</button><span id="saved"></span>
+     <button class="ghost" id="reset" style="margin-left:10px">Reset to defaults</button>
+     <button class="ghost" id="clear" style="margin-left:6px">Clear price cache</button></p>
+  <script src="detect.js"></script>
+  <script src="platforms.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

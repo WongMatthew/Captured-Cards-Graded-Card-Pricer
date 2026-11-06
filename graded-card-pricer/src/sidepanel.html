@@ -15,41 +15,72 @@
     </div>
 
     <form id="searchForm" class="search">
-      <input id="q" type="text" placeholder="e.g. Charizard 4/102 Base Set PSA 10" autocomplete="off" spellcheck="false">
+      <input id="q" type="text" placeholder="e.g. Umbreon VMAX 215/203 PSA 10" autocomplete="off" spellcheck="false">
       <button type="submit" class="primary">Price</button>
     </form>
+    <div id="gradeBar" class="gradebar" hidden></div>
 
     <div class="detected">
-      <div class="detected-head">
-        <span id="detectedLabel">Cards found on this page</span>
+      <div class="row-head">
+        <span id="detectedLabel">Cards on this page</span>
         <button id="scanBtn" class="ghost" type="button">Scan page</button>
       </div>
       <div id="chips" class="chips"><span class="muted">Nothing detected yet.</span></div>
     </div>
+
+    <details id="watchBox" class="watch" hidden>
+      <summary><span>★ Watchlist</span><span id="watchCount" class="muted"></span></summary>
+      <ol id="watchList"></ol>
+    </details>
   </header>
 
   <main>
     <section class="summary" id="summary" hidden>
       <div class="summary-head">
-        <div>
+        <div class="summary-id">
           <div class="eyebrow">Average sold price</div>
           <div id="summaryTitle" class="summary-title"></div>
+          <div id="summaryMeta" class="muted small"></div>
         </div>
-        <label class="toggle"><input type="checkbox" id="trim" checked> Trim outliers</label>
+        <div class="actions">
+          <button id="watchBtn" class="ghost" type="button" title="Add to watchlist">☆ Watch</button>
+          <button id="copyBtn" class="ghost" type="button" title="Copy a summary">Copy</button>
+          <button id="refreshBtn" class="ghost" type="button" title="Fetch fresh prices">↻</button>
+        </div>
       </div>
       <div class="tiles" id="tiles"></div>
+
+      <div class="deal">
+        <label for="ask">Asking / offer price</label>
+        <div class="deal-row">
+          <span class="dollar">$</span><input id="ask" type="text" inputmode="decimal" placeholder="—">
+          <span id="dealVerdict" class="verdict muted">Enter a price to compare with recent sales</span>
+        </div>
+      </div>
+
       <div class="chart-wrap">
         <svg id="chart" role="img" aria-label="Sales over the last 7 days"></svg>
         <div class="legend" id="legend"></div>
       </div>
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" id="trim" checked> Trim outliers</label>
+        <label class="toggle"><input type="checkbox" id="bestOffers"> Count eBay best-offer list prices</label>
+      </div>
       <div class="foot muted" id="summaryFoot"></div>
+
+      <details class="grades" id="gradesBox" hidden>
+        <summary>Other grades of this card <span class="muted">(30 days)</span></summary>
+        <table id="gradesTable"><thead><tr><th>Grade</th><th>Avg</th><th>Sales</th><th>Last</th><th>Collectr</th></tr></thead><tbody></tbody></table>
+      </details>
     </section>
 
     <section class="platforms" id="platforms"></section>
 
     <section class="empty" id="empty">
       <div class="empty-icon">◆</div>
-      <p><strong>Open an email or listing that mentions a graded card</strong> (e.g. “Umbreon VMAX 215/203 PSA 10”) and it will appear above. You can also type a card, or highlight text and right-click → <em>Price graded card</em>.</p>
+      <p><strong>Open an email or listing that mentions a graded card</strong> (e.g. “Umbreon VMAX 215/203 PSA 10”) and it will appear above.
+        You can also type a card, or highlight text and right-click → <em>Price graded card</em>.</p>
+      <p class="muted small">Shortcut: Alt+Shift+P opens this panel.</p>
     </section>
   </main>
 
@@ -61,11 +92,15 @@
         <span class="status"></span>
       </header>
       <div class="pstats"></div>
+      <div class="pnote" hidden></div>
+      <div class="gradeprices" hidden></div>
       <ol class="sales"></ol>
-      <div class="mini" hidden><iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
+      <details class="rejected" hidden><summary></summary><ol></ol></details>
+      <div class="mini" hidden><iframe name="gcp-mini" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write"></iframe></div>
       <footer>
         <label class="toggle small"><input type="checkbox" class="include" checked> In average</label>
         <button class="ghost live" type="button">Mini view</button>
+        <button class="ghost phone" type="button" hidden title="Open as a phone-sized window where you're signed in">📱 Phone</button>
         <a class="open" target="_blank" rel="noopener">Open ↗</a>
       </footer>
     </article>

@@ -1,74 +1,257 @@
-// Runs inside platform pages that the side panel embeds as "mini views".
-// Heuristically pulls sold rows (price + date) out of the rendered page and posts them back.
+/* global GCP */
+// Runs on Alt / Collectr pages that the extension opened (mini view iframe or phone companion window).
+// It finds the right card, opens it, and reports SOLD data (never active listings) back to the side panel.
 (function () {
-  let embedded = false;
-  try {
-    const anc = location.ancestorOrigins;
-    embedded = window.top !== window && anc && anc.length && String(anc[anc.length - 1]).startsWith('chrome-extension://');
-  } catch (e) { embedded = false; }
-  if (!embedded || window.__gcpFrame) return;
+  if (window.__gcpFrame) return;
   window.__gcpFrame = true;
 
-  const host = location.hostname;
-  const platform = host.includes('alt.xyz') ? 'alt' : host.includes('getcollectr') ? 'collectr'
-    : host.includes('ebay') ? 'ebay' : host.includes('pricecharting') ? 'pricecharting' : host.includes('130point') ? '130point' : host;
+  // The target card travels in the URL hash once (#gcp=…), then lives in this tab/frame's sessionStorage.
+  let target = null;
+  try {
+    const m = location.hash.match(/[#&]gcp=([^&]+)/);
+    if (m) {
+      target = JSON.parse(decodeURIComponent(m[1]));
+      sessionStorage.setItem('gcp-target', JSON.stringify(target));
+    } else {
+      target = JSON.parse(sessionStorage.getItem('gcp-target') || 'null');
+    }
+  } catch (e) { target = null; }
+  if (!target) return;
 
+  const platform = location.hostname.includes('getcollectr') ? 'collectr' : 'alt';
+  const parts = GCP.splitQuery(target.q);
+  const send = (msg) => chrome.runtime.sendMessage({ platform, sid: target.sid, url: location.href, ...msg }).catch(() => {});
+  const status = (text) => send({ type: 'frame-status', text });
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const visible = (el) => !!(el && el.getClientRects().length);
+
+  // Run fn on DOM changes until it returns true or time runs out.
+  function watch(fn, ms, onTimeout) {
+    let done = false, t = null;
+    const tick = () => { if (done) return; try { if (fn()) { done = true; obs.disconnect(); } } catch (e) { /* keep trying */ } };
+    const obs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(tick, 400); });
+    obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    setTimeout(tick, 600);
+    setTimeout(() => { if (!done) { done = true; obs.disconnect(); onTimeout && onTimeout(); } }, ms);
+  }
+
+  // Score a search-result card against the target. Higher is better; < 0 = wrong card.
+  function scoreResult(text) {
+    const m = GCP.matchCard(text, parts);
+    if (!m.ok) return -1;
+    let s = 1;
+    if (parts.numberKey && (GCP.allNumberKeys(text).has(parts.numberKey) || new RegExp('[•#]\\s*0*' + parts.numberKey + '\\b', 'i').test(text))) s += 5;
+    for (const w of parts.name.toLowerCase().split(' ')) if (w.length > 2 && text.toLowerCase().includes(w)) s += 1;
+    const gs = GCP.findGrades(text);
+    if (gs.length) s += GCP.titleMatchesGrade(text, parts.grader, parts.grade, parts.qual) ? 4 : -20;
+    return s;
+  }
+
+  function bestLink(selector) {
+    let best = null;
+    const seen = new Set();
+    for (const a of document.querySelectorAll(selector)) {
+      if (!visible(a) || seen.has(a.href)) continue;
+      seen.add(a.href);
+      // Use the surrounding card's text (title, set, number, grade).
+      let box = a, text = norm(a.innerText);
+      for (let i = 0; i < 4 && text.length < 30 && box.parentElement; i++) { box = box.parentElement; text = norm(box.innerText); }
+      const s = scoreResult(text);
+      if (s > 0 && (!best || s > best.s)) best = { a, s, text };
+    }
+    return best;
+  }
+
+  // ---------------------------------------------------------------- Collectr
+  const GRADE_PRICE_RE = /\b(PSA|BGS|CGC|SGC|TAG|ACE|Beckett)\s+(Black Label|Pristine|\d{1,2}(?:\.5)?)\s*\(\s*\$\s?([\d,]+(?:\.\d{1,2})?)\s*\)/gi;
+
+  function collectrGradePrices() {
+    const text = norm(document.body.innerText);
+    const out = {};
+    for (const m of text.matchAll(GRADE_PRICE_RE)) {
+      const grader = m[1].toUpperCase() === 'BECKETT' ? 'BGS' : m[1].toUpperCase();
+      const g = /black/i.test(m[2]) ? { grader, grade: '10', qual: 'BL' } : /pristine/i.test(m[2]) ? { grader, grade: '10', qual: 'PRISTINE' } : { grader, grade: m[2], qual: '' };
+      out[GCP.gradeLabel(g)] = parseFloat(m[3].replace(/,/g, ''));
+    }
+    return out;
+  }
+
+  // Show only the requested grade's line on Collectr's graded chart.
+  function focusLegend(wantLabel) {
+    const items = [...document.querySelectorAll('button, li, div, span')].filter(el => {
+      const t = norm(el.innerText);
+      return el.childElementCount <= 4 && /^(PSA|BGS|CGC|SGC|TAG|ACE)\s+(Black Label|Pristine|\d{1,2}(\.5)?)\s*\(\$[\d,.]+\)$/.test(t);
+    });
+    const buttons = items.filter(el => el.tagName === 'BUTTON');
+    if (buttons.length) items.splice(0, items.length, ...buttons);
+    else for (let i = items.length - 1; i >= 0; i--) if (items.some(o => o !== items[i] && items[i].contains(o))) items.splice(i, 1);
+    const struck = (el) => [el, ...el.querySelectorAll('*')].some(e => /line-through/.test(getComputedStyle(e).textDecorationLine));
+    for (const el of items) {
+      const label = norm(el.innerText).replace(/\s*\(.*/, '');
+      const wanted = label.replace('Black Label', 'Black Label 10').replace('Pristine', 'Pristine 10') === wantLabel || label === wantLabel;
+      if (wanted === struck(el)) el.click();
+    }
+  }
+
+  // Result cards are often divs with the click handler on an inner element: click the title text itself.
+  function clickCard(el) {
+    const firstLine = norm(el.innerText.split('\n')[0]);
+    const leaf = [...el.querySelectorAll('*')].find(n => n.childElementCount === 0 && norm(n.innerText) === firstLine) || el;
+    const target = leaf.closest('a, button, [role="button"], [role="link"]') || leaf;
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+    }
+  }
+
+  function collectr() {
+    const wantLabel = GCP.gradeLabel(parts);
+    if (/\/explore\/product\//.test(location.pathname)) {
+      status('Reading graded prices…');
+      watch(() => {
+        const prices = collectrGradePrices();
+        if (!Object.keys(prices).length) return false;
+        const title = norm((document.querySelector('h1') || {}).innerText);
+        const raw = GCP.parsePrice(norm(document.body.innerText).slice(0, 2000).match(/\$\s?[\d,]+\.\d{2}/) || '');
+        send({ type: 'frame-sales', rows: [], product: title, gradePrices: prices, marketPrice: prices[wantLabel] ?? null, rawPrice: raw });
+        setTimeout(() => focusLegend(wantLabel), 300);
+        return true;
+      }, 20000, () => send({
+        type: 'frame-sales', rows: [], marketPrice: null,
+        note: /technical difficulties|try again/i.test(document.body.innerText)
+          ? 'Collectr couldn’t load its data right now. Press ↻ or use 📱 Phone.'
+          : 'Collectr shows no graded prices for this card.'
+      }));
+      return;
+    }
+    // Search page: open the product that matches the card. Collectr's search is picky, so try a few phrasings.
+    searchWithFallbacks('Collectr', [parts.name, GCP.coreName(parts), [parts.keyWord, parts.number].join(' ')], 'query', () => {
+      let best = bestLink('a[href*="/explore/product/"]');
+      if (!best) {
+        // Results are clickable cards rather than links.
+        for (const el of document.querySelectorAll('li, .product-card, article')) {
+          const t = norm(el.innerText);
+          if (!visible(el) || t.length < 10 || t.length > 300 || !/\$[\d,]+\.\d{2}/.test(t)) continue;
+          const sc = scoreResult(t);
+          if (sc > 0 && (!best || sc > best.s)) best = { a: el, s: sc, text: t };
+        }
+      }
+      if (!best || (parts.numberKey && best.s < 6)) return false;
+      status('Opening ' + best.text.slice(0, 60) + '…');
+      if (best.a.href) location.href = best.a.href; else clickCard(best.a);
+      return true;
+    });
+  }
+
+  // Try each search phrasing in turn (state kept in sessionStorage across page loads).
+  function searchWithFallbacks(name, queries, param, tryPick) {
+    queries = [...new Set(queries.map(q => norm(q)).filter(Boolean))];
+    const cur = norm(new URLSearchParams(location.search).get(param) || '');
+    let idx = queries.findIndex(q => q.toLowerCase() === cur.toLowerCase());
+    if (idx < 0) idx = 0;
+    status(`Finding the card on ${name}…`);
+    watch(tryPick, 15000, () => {
+      const next = queries[idx + 1];
+      if (next) {
+        status(`Trying “${next}” on ${name}…`);
+        const u = new URL(location.href);
+        u.searchParams.set(param, next);
+        u.hash = '';
+        location.href = u.toString();
+      } else {
+        send({ type: 'frame-sales', rows: [], marketPrice: null, note: `Couldn’t find this exact card on ${name}. Pick it in the mini view or 📱 Phone window.` });
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- Alt
+  const LISTING_RE = /\b(bid|bids|buy now|make (an )?offer|starting (bid|at)|current bid|ends? in|time left|watching|asking|list(ed|ing)? price|for sale|add to cart|place bid)\b|\/\s*BID\b|\b\d+D\s*\d+H\b/i;
+  const SOLD_SECTION_RE = /\b(sales? history|recent sales|sold history|past sales|last sold|previous sales|transaction history|comps|sold listings|market sales)\b/i;
   const PRICE_RE = /\$\s?\d[\d,]*(?:\.\d{1,2})?/g;
 
-  function extract() {
+  function rowsIn(root, requireSoldWord) {
     const rows = [];
-    const candidates = document.querySelectorAll('tr, li, [role="row"], article, a, div');
     const seen = new Set();
-    for (const el of candidates) {
-      if (el.childElementCount > 40) continue;
-      const t = (el.innerText || '').trim();
-      if (t.length < 8 || t.length > 320) continue;
+    for (const el of root.querySelectorAll('tr, li, [role="row"], a, div')) {
+      if (el.childElementCount > 30) continue;
+      const t = norm(el.innerText);
+      if (t.length < 8 || t.length > 260) continue;
       const prices = t.match(PRICE_RE);
-      if (!prices || prices.length !== 1) continue;
+      if (!prices || prices.length > 2) continue;
       const date = GCP.parseDate(t);
       if (!date) continue;
-      // Keep the smallest element that still holds both price and date.
-      let inner = false;
-      for (const c of el.children) {
-        const ct = c.innerText || '';
-        if (ct.match(PRICE_RE) && GCP.parseDate(ct)) { inner = true; break; }
-      }
-      if (inner && el.tagName !== 'TR') continue;
+      if (LISTING_RE.test(t)) continue;
+      if (requireSoldWord && !/\bsold\b|\bsale\b/i.test(t)) continue;
+      // Keep the smallest element holding both a price and a date.
+      if ([...el.children].some(c => { const ct = norm(c.innerText); return /\$\s?\d/.test(ct) && GCP.parseDate(ct); })) continue;
       if (seen.has(t)) continue;
       seen.add(t);
       const link = el.closest('a') || el.querySelector('a');
-      rows.push({
-        price: GCP.parsePrice(prices[0]),
-        date: date.toISOString(),
-        title: t.replace(/\s+/g, ' ').slice(0, 160),
-        url: link ? link.href : location.href
+      rows.push({ price: GCP.parsePrice(prices[prices.length - 1]), date: date.toISOString(), title: t.slice(0, 160), url: link ? link.href : location.href, scoped: !requireSoldWord });
+      if (rows.length >= 100) break;
+    }
+    return rows;
+  }
+
+  function altSold() {
+    let rows = [];
+    // 1) Rows inside a "Sales history"-style section belong to the open asset.
+    const heads = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6, div, span, p, button, [role="tab"]')]
+      .filter(el => el.childElementCount <= 2 && norm(el.innerText).length < 40 && SOLD_SECTION_RE.test(norm(el.innerText)));
+    for (const h of heads) {
+      let box = h.parentElement;
+      for (let i = 0; i < 5 && box; i++, box = box.parentElement) {
+        const r = rowsIn(box, false);
+        if (r.length >= 1) { rows = rows.concat(r); break; }
+      }
+    }
+    // 2) Anywhere else, only rows that explicitly say sold.
+    if (!rows.length) rows = rowsIn(document.body, true);
+    const seen = new Set();
+    rows = rows.filter(r => !seen.has(r.title) && seen.add(r.title));
+    const text = norm(document.body.innerText);
+    const altValue = (text.match(/alt value[^$]{0,20}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
+    const lastSale = (text.match(/last (?:sale|sold)[^$]{0,20}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
+    return { rows, marketPrice: altValue ? GCP.parsePrice(altValue) : lastSale ? GCP.parsePrice(lastSale) : null, signedOut: /sign up \/ log in|log in to see|sign in to view/i.test(text) };
+  }
+
+  function alt() {
+    if (/^\/itm\//.test(location.pathname) || /^\/research\//.test(location.pathname)) {
+      status('Reading sold history…');
+      // Open a sales-history tab if the page has one.
+      const tab = [...document.querySelectorAll('button, [role="tab"], a')].find(el => SOLD_SECTION_RE.test(norm(el.innerText)) && norm(el.innerText).length < 30);
+      if (tab) tab.click();
+      let last = '';
+      watch(() => {
+        const r = altSold();
+        const sig = r.rows.length + ':' + r.marketPrice;
+        if (sig !== last) { last = sig; send({ type: 'frame-sales', rows: r.rows, marketPrice: r.marketPrice, product: norm((document.querySelector('h1, h2') || {}).innerText).slice(0, 80) }); }
+        return r.rows.length >= 3;
+      }, 20000, () => {
+        const r = altSold();
+        send({
+          type: 'frame-sales', rows: r.rows, marketPrice: r.marketPrice,
+          note: r.rows.length ? '' : r.signedOut ? 'Alt only shows sold history when you’re signed in. Open the phone window and log in.' : 'No sold history visible on this Alt page.'
+        });
       });
-      if (rows.length >= 80) break;
+      return;
     }
-    // A headline "market price" for apps (e.g. Collectr) that show value without dated sales.
-    let marketPrice = null;
-    const label = [...document.querySelectorAll('div, span, p, dt, h2, h3')].find(e =>
-      e.childElementCount < 4 && /market\s*(price|value)|est\.?\s*value|alt value|current value/i.test(e.innerText || '') && (e.innerText || '').length < 80);
-    if (label) {
-      const box = label.parentElement || label;
-      const p = (box.innerText || '').match(PRICE_RE);
-      if (p) marketPrice = GCP.parsePrice(p[0]);
-    }
-    return { rows, marketPrice };
+    // Browse page = ACTIVE listings. Never report them as sales; open the matching asset to read its sold history.
+    searchWithFallbacks('Alt', [GCP.coreName(parts), parts.name, parts.keyWord], 'query', () => {
+      const best = bestLink('a[href*="/itm/"], a[href*="/research/"]');
+      if (!best) return false;
+      status('Opening ' + best.text.slice(0, 60) + '…');
+      location.href = best.a.href;
+      return true;
+    });
   }
 
-  let lastSig = '';
-  function send() {
-    const { rows, marketPrice } = extract();
-    const sig = rows.length + ':' + marketPrice;
-    if (sig === lastSig) return;
-    lastSig = sig;
-    chrome.runtime.sendMessage({ type: 'frame-sales', platform, url: location.href, rows, marketPrice }).catch(() => {});
+  // SPA route changes: re-run when the path changes.
+  let lastPath = '';
+  function route() {
+    if (location.pathname + location.search === lastPath) return;
+    lastPath = location.pathname + location.search;
+    (platform === 'collectr' ? collectr : alt)();
   }
-
-  let t = null;
-  const obs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(send, 800); });
-  obs.observe(document.documentElement, { childList: true, subtree: true });
-  setTimeout(send, 1500);
-  setTimeout(() => obs.disconnect(), 45000);
+  route();
+  setInterval(route, 1000);
 })();

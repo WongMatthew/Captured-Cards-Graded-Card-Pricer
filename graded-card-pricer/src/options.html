@@ -19,9 +19,11 @@
   <h2>Behavior</h2>
   <label class="row"><input type="checkbox" id="autoScan"> Automatically scan pages and emails for graded cards</label>
   <label class="row"><input type="checkbox" id="autoSearch"> Automatically price the first card detected on the page</label>
-  <label class="row"><input type="checkbox" id="trimOutliers"> Trim outliers (lots, mislabeled listings) from averages by default</label>
+  <label class="row"><input type="checkbox" id="pokemonOnly"> Only detect Pokémon cards (skip sports and other graded cards)</label>
+  <label class="row"><input type="checkbox" id="trimOutliers"> Trim outliers (mislabeled listings) from averages by default</label>
+  <label class="row"><input type="checkbox" id="excludeBestOffers"> Leave eBay “best offer accepted” sales out of averages unless 130point shows the real price</label>
   <h2>Platforms</h2>
-  <p class="help"><code>{q}</code> is replaced with the search text. Alt and Collectr have no public sold-price API, so they open as embedded mini views and the extension reads prices from the page. If one of those sites changes its search URL, update it here.</p>
+  <p class="help"><code>{q}</code> is replaced with the search text. Alt and Collectr have no public price API. They open as phone-sized mini views (or a 📱 phone window where you’re signed in), and the extension reads the sold data from the page. If one of those sites changes its search URL, update it here.</p>
   <div id="platforms"></div>
   <p><button class="primary" id="save" style="height:32px">Save</button><span id="saved"></span>
      <button class="ghost" id="reset" style="margin-left:10px">Reset to defaults</button>

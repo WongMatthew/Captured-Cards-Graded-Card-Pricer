@@ -5,13 +5,13 @@ const $ = (s) => document.querySelector(s);
 async function load() {
   const s = await chrome.storage.sync.get(null);
   const cfg = structuredClone(P.DEFAULTS);
-  for (const k of ['autoScan', 'autoSearch', 'trimOutliers']) if (k in s) cfg[k] = s[k];
+  for (const k of ['autoScan', 'autoSearch', 'trimOutliers', 'pokemonOnly', 'excludeBestOffers']) if (k in s) cfg[k] = s[k];
   if (s.platforms) for (const id of Object.keys(cfg.platforms)) Object.assign(cfg.platforms[id], s.platforms[id] || {});
   render(cfg);
 }
 
 function render(cfg) {
-  for (const k of ['autoScan', 'autoSearch', 'trimOutliers']) $('#' + k).checked = cfg[k];
+  for (const k of ['autoScan', 'autoSearch', 'trimOutliers', 'pokemonOnly', 'excludeBestOffers']) $('#' + k).checked = cfg[k];
   const box = $('#platforms');
   box.innerHTML = '';
   for (const [id, p] of Object.entries(cfg.platforms)) {
@@ -30,7 +30,8 @@ $('#save').onclick = async () => {
   for (const el of document.querySelectorAll('.en')) platforms[el.dataset.id] = { enabled: el.checked };
   for (const el of document.querySelectorAll('.url')) platforms[el.dataset.id].url = el.value.trim();
   await chrome.storage.sync.set({
-    autoScan: $('#autoScan').checked, autoSearch: $('#autoSearch').checked, trimOutliers: $('#trimOutliers').checked, platforms
+    autoScan: $('#autoScan').checked, autoSearch: $('#autoSearch').checked, trimOutliers: $('#trimOutliers').checked,
+    pokemonOnly: $('#pokemonOnly').checked, excludeBestOffers: $('#excludeBestOffers').checked, platforms
   });
   $('#saved').textContent = 'Saved';
   setTimeout(() => ($('#saved').textContent = ''), 1500);

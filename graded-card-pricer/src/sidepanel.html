@@ -15,17 +15,21 @@
     </div>
 
     <form id="searchForm" class="search">
-      <input id="q" type="text" placeholder="e.g. Umbreon VMAX 215/203 PSA 10" autocomplete="off" spellcheck="false">
+      <input id="q" type="text" placeholder="Card + grade, or a cert number (e.g. 140688778)" autocomplete="off" spellcheck="false">
       <button type="submit" class="primary">Price</button>
     </form>
-    <div id="gradeBar" class="gradebar" hidden></div>
+    <div id="gradeBar" class="gradebar"></div>
 
-    <div class="detected">
+    <div class="pagebar">
       <div class="row-head">
-        <span id="detectedLabel">Cards on this page</span>
+        <span id="pageLabel" class="ellipsis">This page</span>
         <button id="scanBtn" class="ghost" type="button">Scan page</button>
       </div>
-      <div id="chips" class="chips"><span class="muted">Nothing detected yet.</span></div>
+      <div id="tabPrompt" class="prompt" hidden>
+        <span id="tabPromptText" class="ellipsis"></span>
+        <button id="tabPromptScan" class="ghost" type="button">Scan this page</button>
+      </div>
+      <div id="chips" class="chips"><span class="muted">Press “Scan page” to find graded cards and cert numbers.</span></div>
     </div>
 
     <details id="watchBox" class="watch" hidden>
@@ -35,36 +39,60 @@
   </header>
 
   <main>
+    <section class="empty" id="empty">
+      <div class="empty-icon">◆</div>
+      <p><strong>Search a card with its grade</strong> (e.g. “Umbreon VMAX 215/203 PSA 10”), <strong>enter a slab cert number</strong>,
+        or press <em>Scan page</em> on an email or listing.</p>
+      <p class="muted small">Tip: highlight text on any page → right-click → “Price graded card”. Alt+Shift+P opens this panel.</p>
+    </section>
+
     <section class="summary" id="summary" hidden>
       <div class="summary-head">
         <div class="summary-id">
-          <div class="eyebrow">Average sold price</div>
+          <div class="eyebrow">Sold price · CAD</div>
           <div id="summaryTitle" class="summary-title"></div>
           <div id="summaryMeta" class="muted small"></div>
         </div>
         <div class="actions">
-          <button id="watchBtn" class="ghost" type="button" title="Add to watchlist">☆ Watch</button>
+          <button id="watchBtn" class="ghost" type="button" title="Add to watchlist">☆</button>
           <button id="copyBtn" class="ghost" type="button" title="Copy a summary">Copy</button>
           <button id="refreshBtn" class="ghost" type="button" title="Fetch fresh prices">↻</button>
         </div>
       </div>
+
       <div class="tiles" id="tiles"></div>
+      <div class="keystats" id="keystats"></div>
 
       <div class="deal">
-        <label for="ask">Asking / offer price</label>
-        <div class="deal-row">
-          <span class="dollar">$</span><input id="ask" type="text" inputmode="decimal" placeholder="—">
-          <span id="dealVerdict" class="verdict muted">Enter a price to compare with recent sales</span>
-        </div>
+        <label for="ask">Asking / offer</label>
+        <span class="dollar">$</span><input id="ask" type="text" inputmode="decimal" placeholder="—">
+        <span id="dealVerdict" class="verdict muted">Compare a price with recent sales</span>
       </div>
 
-      <div class="chart-wrap">
-        <svg id="chart" role="img" aria-label="Sales over the last 7 days"></svg>
+      <div class="block">
+        <div class="block-head">
+          <span>Price trend</span>
+          <div class="seg" id="rangeSeg">
+            <button data-days="7">7D</button><button data-days="30" class="on">30D</button><button data-days="90">90D</button><button data-days="365">1Y</button>
+          </div>
+        </div>
+        <div class="chart-box">
+          <svg id="chart" role="img" aria-label="Price trend"></svg>
+          <div id="tip" class="tip" hidden></div>
+        </div>
         <div class="legend" id="legend"></div>
       </div>
+
+      <div class="block">
+        <div class="block-head"><span>Recent sales</span><span id="salesCount" class="muted small"></span></div>
+        <ol id="recent" class="sales"></ol>
+        <button id="moreSales" class="linkish" type="button" hidden></button>
+      </div>
+
       <div class="toggles">
         <label class="toggle"><input type="checkbox" id="trim" checked> Trim outliers</label>
         <label class="toggle"><input type="checkbox" id="bestOffers"> Count eBay best-offer list prices</label>
+        <label class="toggle" title="PriceCharting, 130point and Alt only show US$; converted at the Bank of Canada daily rate"><input type="checkbox" id="converted" checked> Include US$ sources (converted)</label>
       </div>
       <div class="foot muted" id="summaryFoot"></div>
 
@@ -74,36 +102,36 @@
       </details>
     </section>
 
-    <section class="platforms" id="platforms"></section>
-
-    <section class="empty" id="empty">
-      <div class="empty-icon">◆</div>
-      <p><strong>Open an email or listing that mentions a graded card</strong> (e.g. “Umbreon VMAX 215/203 PSA 10”) and it will appear above.
-        You can also type a card, or highlight text and right-click → <em>Price graded card</em>.</p>
-      <p class="muted small">Shortcut: Alt+Shift+P opens this panel.</p>
+    <section class="sources" id="sourcesBox" hidden>
+      <div class="sources-head">Sources</div>
+      <div id="sources"></div>
     </section>
   </main>
 
-  <template id="platformTpl">
-    <article class="pcard">
-      <header>
+  <template id="sourceTpl">
+    <div class="src">
+      <button class="src-row" type="button">
         <span class="pbadge"></span>
-        <div class="pname"><strong></strong><small></small></div>
+        <span class="src-name"><strong></strong><small></small></span>
+        <span class="src-val"></span>
         <span class="status"></span>
-      </header>
-      <div class="pstats"></div>
-      <div class="pnote" hidden></div>
-      <div class="gradeprices" hidden></div>
-      <ol class="sales"></ol>
-      <details class="rejected" hidden><summary></summary><ol></ol></details>
-      <div class="mini" hidden><iframe name="gcp-mini" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write"></iframe></div>
-      <footer>
-        <label class="toggle small"><input type="checkbox" class="include" checked> In average</label>
-        <button class="ghost live" type="button">Mini view</button>
-        <button class="ghost phone" type="button" hidden title="Open as a phone-sized window where you're signed in">📱 Phone</button>
-        <a class="open" target="_blank" rel="noopener">Open ↗</a>
-      </footer>
-    </article>
+        <span class="chev">▸</span>
+      </button>
+      <div class="src-body" hidden>
+        <div class="pnote" hidden></div>
+        <div class="gradeprices" hidden></div>
+        <ol class="sales"></ol>
+        <details class="rejected" hidden><summary></summary><ol></ol></details>
+        <div class="mini" hidden><iframe referrerpolicy="no-referrer-when-downgrade"></iframe></div>
+        <div class="src-actions">
+          <label class="toggle small"><input type="checkbox" class="include" checked> In average</label>
+          <button class="ghost load" type="button" hidden>Load here</button>
+          <button class="ghost live" type="button">Mini view</button>
+          <button class="ghost phone" type="button" hidden title="Phone-sized window of the website, signed in as you">📱 Phone</button>
+          <a class="open" target="_blank" rel="noopener">Open ↗</a>
+        </div>
+      </div>
+    </div>
   </template>
 
   <script src="detect.js"></script>

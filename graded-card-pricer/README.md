@@ -1,4 +1,4 @@
-# Graded Card Pricer (Chrome extension) · v2
+# Graded Card Pricer (Chrome extension) · v3.1
 
 Reads the email or page you have open, finds graded Pokémon cards ("Umbreon VMAX 215/203 PSA 10",
 "Charizard Base Set 4/102 BGS 9.5", PSA slab text like "#215 UMBREON VMAX GEM MT 10"), and shows recent **sold**
@@ -6,25 +6,22 @@ prices from eBay, PriceCharting, 130point, Alt and Collectr in one side panel.
 
 ## What you get
 
-- **Averages for the last 1, 3, 5 and 7 days.** Each shows the sale count, median, range, the dates it covers and the
-  change against the 7-day average. A 30-day average appears underneath.
-- **Exact-card matching.** Each listing is checked against the card before it counts. Rejected: different grade
-  (PSA 9 ≠ PSA 9.5 ≠ 10, BGS 10 ≠ Black Label, CGC 10 ≠ Pristine), different card number, different card type
-  (V ≠ VMAX), and variants you didn't ask for (1st Edition, Shadowless, Japanese, Base Set 2, Celebrations reprints,
-  4th prints, errors, jumbos, lots, proxies). Each card lists everything it filtered out, with the reason, and a
-  **Use** button if you disagree.
-- **Click any sale's price** to leave it out of the averages. Your choice is remembered for that card.
-- **Each sale is counted once,** even when eBay, 130point and PriceCharting all report it. eBay "best offer accepted"
-  sales are left out unless 130point shows the real price (toggle available).
-- **Deal check.** It picks up an asking price from the email ("…PSA 10 for $1,700") or you can type one.
-  It shows how far that is above or below the 7-day average and median, and draws it on the chart.
-- **Grade switcher** (PSA 10 / 9 / 8, BGS, CGC, SGC, TAG) and an **Other grades** table: 30-day averages for every grade
-  of the same card, plus Collectr's price per grade. Click a grade to re-price.
-- **Watchlist.** Press ☆ Watch to track a card. Its 7-day average is saved each time you price it, with the change since last time.
-- **Copy** puts a plain-text price summary on your clipboard to paste to a buyer or seller.
-- **Alt and Collectr in phone layout.** Their mini views load the mobile version of each site. **📱 Phone** opens a
-  phone-sized window, a real tab where you're signed in, and the extension reads data there too.
-- Shortcut **Alt+Shift+P** opens the panel. Highlight any text → right-click → **Price graded card**.
+- **Scanning when you want it.** The current page is scanned once when you open the panel. After that the panel never
+  rescans or re-prices by itself. Switch tabs and it offers a **Scan this page** button. (Background scanning with a
+  badge count can be turned on in Settings.)
+- **Cert lookup.** Type a slab's cert number (e.g. `140688778`, `CGC 4061234001`), or scan an email that contains one.
+  With a free PSA API key in Settings, PSA certs are looked up instantly, with population counts. Without one, the PSA
+  or CGC cert page opens in a tab and the card is read from it.
+- **Sold-price summary:** averages for the last 1, 3, 5 and 7 days. Also the last sale, the lowest and highest sale
+  this week, and a 30-day average. The boxes keep a fixed size while loading, so nothing jumps.
+- **Price trend line chart:** the daily average over 7D / 30D / 90D / 1Y, every sale as a dot, period change, and a
+  hover tooltip.
+- **Recent sales:** one list across all sources, showing which marketplace each sale came from. Click a price to leave
+  that sale out.
+- **Exact-card matching.** Different grades, card numbers, card types (V vs VMAX) and versions are filtered out, each
+  with a reason and a **Use** button to override. Versions that *every* sale of a card mentions (e.g. "Japanese" for a
+  Japan-only promo) are treated as part of the card automatically. Type "English" to force English copies only.
+- Deal check against an asking price, grade switcher, an "Other grades" table, a watchlist, and copy summary.
 
 ## Install / update
 
@@ -32,21 +29,31 @@ prices from eBay, PriceCharting, 130point, Alt and Collectr in one side panel.
 2. Click **Load unpacked** and pick this `graded-card-pricer` folder. If an older version is loaded, remove it first or press its reload ↻ button.
 3. Reload any open Gmail tabs so the new scanner runs there.
 
-## How each platform is read
+## Currency: everything in CAD
 
-| Platform | How | Notes |
+eBay is searched on **eBay.ca**, so its prices are already in CAD. Collectr, Alt and Card Ladder show CAD when you set CAD
+in your account there; the extension also switches Collectr's currency menu to CAD and detects which currency each page
+is showing. Anything that still arrives in another currency (PriceCharting and most of 130point only show US$) is converted at the
+**Bank of Canada daily rate** and marked **≈ from USD …**. Untick *Include US$ sources (converted)* to use only native
+CAD prices.
+
+## How each source is read
+
+| Source | How | Notes |
 |---|---|---|
-| eBay | Sold + Completed search, with lots and proxies excluded in the query | Uses your browser session. Stops at eBay's "results matching fewer words" section; non-USD prices are ignored. If eBay turns away the background request, the eBay card shows **Open sold results ↗**. Opening it loads the page in a normal tab, and the panel reads the sales from that page. |
-| PriceCharting | Picks the matching product, then reads its completed-sales tables | Product is picked by card number and name; variants (1st Ed, Base Set 2…) are avoided. |
-| 130point | Its sales search | Supplies the real price for accepted best offers. |
-| Alt | Opens the matching item, then reads only rows marked as sold or listed under a sales-history heading | Browse results are **active listings** and are never counted. Alt only shows sold history to signed-in users, so use **📱 Phone** and log in. |
-| Collectr | Mobile site: finds the exact product, then reads the price for each grade | Collectr's website has no list of individual graded sales (that's only in its phone app). The extension reports Collectr's market price for your grade. It doesn't count toward the date averages because it has no sale dates. |
+| eBay.ca | Sold + completed results, newest first, **up to 3 pages** (720 listings) | With eBay API keys (Settings) it uses eBay's official sold-items API instead: exact sale times, no blocking. eBay approves that API case by case. Without keys, if eBay refuses the background request, **Open sold results ↗** opens a normal tab; every results page you open there adds to the data. Settings: all eBay.ca sellers, or Canada-only. |
+| 130point | Its sales search | If refused, **Search on 130point ↗** opens 130point, types the search for you, and the results are read from that tab. |
+| PriceCharting | Matching product, then its completed-sales tables | US$ (converted) unless your PriceCharting account is set to CAD. |
+| Card Ladder | Your signed-in Card Ladder sales history | **📱 Connect** once and sign in; the window then follows every search. |
+| Alt | Your signed-in Alt: opens the matching item and reads only rows marked as sold | **📱 Connect** once and sign in. Browse results are active listings and are never counted. |
+| Collectr | The matching product's price per grade | **📱 Connect** to use your paid account (phone-sized window); otherwise the public price loads quietly in the panel. |
 
-The mini views work through session-only header rules that apply only to frames inside this extension's panel and to
-its phone windows. Your normal browsing is untouched.
+**Connected windows:** Alt, Collectr and Card Ladder need your login, and Chrome keeps logins out of embedded panels.
+Each gets one real phone-sized window. Sign in once, minimise it if you like, and it follows every new search.
+Closing the window disconnects it.
 
-Date windows: sale dates have no time of day, so **last N days = today plus the N previous days**. "Last 1 day" therefore
-includes yesterday's sales.
+**Date boxes:** calendar days in your time zone, counting today. "Today" = sold today; "Last 7 days" = today plus the 6
+days before. Sales with an exact time (eBay API, 130point) are placed on your local date.
 
 ## Tests
 

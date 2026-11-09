@@ -78,15 +78,61 @@ assert.strictEqual(d('Dec 28'), new Date(2025, 11, 28).toDateString());
 assert.strictEqual(d('yesterday'), new Date(2026, 10, 5).toDateString());
 assert.strictEqual(d('Feb 30, 2026'), null);
 
-// --- windows: 1 day = today + yesterday, week = last 7 days + today
+// --- windows (calendar days counting today): Today = today only, Last 7 days = today + 6 days before
 const sales = [0, 0, 1, 2, 3, 4, 5, 6, 7, 9].map((ago, i) => ({ price: 100 + i * 10, date: new Date(2026, 10, 6 - ago) }));
 const w = G.windowStats(sales, now);
-assert.strictEqual(w['1d'].count, 3);
-assert.strictEqual(w['3d'].count, 5);
-assert.strictEqual(w['5d'].count, 7);
-assert.strictEqual(w['7d'].count, 9);
-assert.strictEqual(w['1d'].avg, 110);
+assert.strictEqual(w['1d'].count, 2);
+assert.strictEqual(w['3d'].count, 4);
+assert.strictEqual(w['5d'].count, 6);
+assert.strictEqual(w['7d'].count, 8);
+assert.strictEqual(w['1d'].avg, 105);
 const trimmed = G.trimOutliers([...sales, { price: 5000, date: now }]);
 assert(!trimmed.some(s => s.price === 5000));
 assert.strictEqual(G.trimOutliers(sales).length, sales.length, 'normal spread must not be trimmed');
 console.log('all detect tests passed');
+
+// --- v3: typed bare numbers, cards that only exist in one variant, cert numbers
+const lp = G.splitQuery('luigi pikachu 295 PSA 10');
+assert.strictEqual(lp.number, '295');
+assert.strictEqual(lp.name, 'luigi pikachu');
+const lpTitles = ['2016 POKEMON JAPANESE XY PROMO #295 LUIGI PIKACHU PSA 10', 'Luigi Pikachu Holo #295 XY Promo 2016 Pokemon Japanese PSA 10',
+  'Pokemon Luigi Pikachu 295/XY-P Japanese Promo PSA 10', 'Mario Pikachu #294 Japanese PSA 10'];
+const inh = G.inherentVariants(lpTitles, lp);
+assert.deepStrictEqual(inh, ['Japanese']);
+const lpM = { ...lp, allowVariants: inh };
+assert(G.matchCard(lpTitles[0], lpM).ok && G.matchCard(lpTitles[1], lpM).ok && G.matchCard('Luigi Pikachu #295 PSA 10', lpM).ok);
+assert(!G.matchCard(lpTitles[3], lpM).ok, 'Mario Pikachu #294 is a different card');
+// a minority variant must still be filtered (1st Edition among unlimited Charizards)
+const cz = G.splitQuery('Charizard Base Set 4/102 PSA 9');
+assert.deepStrictEqual(G.inherentVariants(['Charizard Base Set 4/102 PSA 9', 'Charizard Holo 4/102 PSA 9', 'Charizard 1st Edition 4/102 PSA 9'], cz), []);
+assert.strictEqual(G.splitQuery('Umbreon VMAX 2021 PSA 10').number, '');
+const certs = G.detectCerts('Your PSA order shipped. Cert #140688778. Also CGC Certification Number: 4061234001');
+assert.deepStrictEqual(certs.map(c => c.grader + ':' + c.cert), ['PSA:140688778', 'CGC:4061234001']);
+assert.deepStrictEqual(G.parseCertQuery('140688778'), { grader: 'PSA', cert: '140688778', guessed: true });
+assert.strictEqual(G.parseCertQuery('cgc 4061234001').grader, 'CGC');
+assert.strictEqual(G.parseCertQuery('Charizard 4/102 PSA 9'), null);
+global.GCP = G; require('../src/platforms.js');
+assert.strictEqual(GCPPlatforms.certToQuery({ grader: 'PSA', subject: 'LUIGI PIKACHU-HOLO', brand: 'P.M. JPN. XY PROMO', cardNumber: '295', gradeText: 'GEM MT 10' }),
+  'Luigi Pikachu Japanese XY Promo 295 PSA 10');
+assert.strictEqual(GCPPlatforms.certToQuery({ grader: 'PSA', subject: 'CHARIZARD-HOLO', brand: 'POKEMON GAME', cardNumber: '4', variety: '1ST EDITION', gradeText: 'NM-MT 8' }),
+  'Charizard Base Set 1st Edition 4 PSA 8');
+console.log('v3 tests passed');
+
+// --- v3.1: CAD, windows by calendar day
+assert.deepStrictEqual(G.parseMoney('C $1,234.56'), { amount: 1234.56, cur: 'CAD' });
+assert.deepStrictEqual(G.parseMoney('US $45.00'), { amount: 45, cur: 'USD' });
+assert.deepStrictEqual(G.parseMoney('Sale Price: $1,600.00 USD'), { amount: 1600, cur: 'USD' });
+assert.strictEqual(G.parseMoney('$99').cur, null);
+assert.strictEqual(G.parseMoney('£30').cur, 'GBP');
+assert.strictEqual(G.parseDateTime('Date: Thu 30 Oct 2026 18:22:54 GMT').toISOString(), '2026-10-30T18:22:54.000Z');
+const fxr = { rates: { CAD: 1, USD: 1.4 } };
+assert.deepStrictEqual(GCPPlatforms.toCAD(100, 'USD', fxr), { price: 140, converted: true, orig: { amount: 100, cur: 'USD' } });
+assert.deepStrictEqual(GCPPlatforms.toCAD(100, 'CAD', fxr), { price: 100, converted: false });
+assert.strictEqual(GCPPlatforms.toCAD(100, 'USD', null), null);
+const w2 = G.windowStats([0, 1, 2, 6, 7].map(a => ({ price: 10, date: new Date(2026, 10, 6 - a) })), now);
+assert.strictEqual(w2['1d'].count, 1, '"Today" = today only');
+assert.strictEqual(w2['3d'].count, 3);
+assert.strictEqual(w2['7d'].count, 4, 'Last 7 days = today + 6 days before');
+const mig = GCPPlatforms.migrateSettings({ platforms: { ebay: { url: 'https://www.ebay.com/sch/i.html?_nkw={q}&LH_Sold=1' } } });
+assert(/ebay\.ca/.test(mig.platforms.ebay.url));
+console.log('v3.1 tests passed');

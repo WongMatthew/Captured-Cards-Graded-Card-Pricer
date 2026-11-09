@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Graded Card Pricer",
-  "version": "2.1.0",
+  "version": "3.1.0",
   "description": "Spots graded Pokémon cards in emails and pages and shows recent sold prices from eBay, PriceCharting, 130point, Alt and Collectr.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -51,12 +51,36 @@
     },
     {
       "matches": [
+        "*://*.ebay.ca/sch/*",
         "*://*.ebay.com/sch/*"
       ],
       "js": [
         "src/detect.js",
         "src/platforms.js",
         "src/ebay-reader.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.psacard.com/cert/*",
+        "*://*.cgccards.com/certlookup/*"
+      ],
+      "js": [
+        "src/detect.js",
+        "src/cert-reader.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://130point.com/sales*",
+        "*://*.130point.com/sales*"
+      ],
+      "js": [
+        "src/detect.js",
+        "src/platforms.js",
+        "src/point130-reader.js"
       ],
       "run_at": "document_idle"
     },
@@ -77,7 +101,9 @@
       "matches": [
         "*://*.alt.xyz/*",
         "*://alt.xyz/*",
-        "*://*.getcollectr.com/*"
+        "*://*.getcollectr.com/*",
+        "*://*.cardladder.com/*",
+        "*://cardladder.com/*"
       ],
       "js": [
         "src/detect.js",

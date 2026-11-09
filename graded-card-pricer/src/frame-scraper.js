@@ -18,7 +18,19 @@
   } catch (e) { target = null; }
   if (!target) return;
 
-  const platform = location.hostname.includes('getcollectr') ? 'collectr' : 'alt';
+  const platform = location.hostname.includes('getcollectr') ? 'collectr' : location.hostname.includes('cardladder') ? 'cardladder' : 'alt';
+
+  // Currency the page is showing. If you've set the site to CAD (or picked CAD in its currency menu) prices are CAD.
+  function pageCurrency() {
+    const tags = [...document.querySelectorAll('button, span, div, a, select, option:checked, [role="button"]')]
+      .filter(el => visible(el) && el.childElementCount <= 2)
+      .map(el => norm(el.tagName === 'SELECT' ? el.selectedOptions[0] && el.selectedOptions[0].text : el.innerText).toUpperCase())
+      .filter(t => /^(CAD|USD|CA\$|C\$|US\$)(\s|$)/.test(t));
+    if (tags.some(t => /^(CAD|CA\$|C\$)/.test(t))) return 'CAD';
+    if (tags.some(t => /^(USD|US\$)/.test(t))) return 'USD';
+    return null;
+  }
+  const rowCur = (text, fallback) => { const m = GCP.parseMoney(text); return (m && m.cur) || fallback; };
   const parts = GCP.splitQuery(target.q);
   const send = (msg) => chrome.runtime.sendMessage({ platform, sid: target.sid, url: location.href, ...msg }).catch(() => {});
   const status = (text) => send({ type: 'frame-status', text });
@@ -103,16 +115,33 @@
     }
   }
 
+  // Collectr has a currency menu (USD by default). Switch it to CAD once per tab.
+  function collectrToCAD() {
+    if (pageCurrency() !== 'USD' || sessionStorage.getItem('gcp-cad-tried')) return;
+    sessionStorage.setItem('gcp-cad-tried', '1');
+    const usd = [...document.querySelectorAll('button, [role="button"], div, span')].find(el => visible(el) && el.childElementCount <= 2 && norm(el.innerText) === 'USD');
+    if (!usd) return;
+    (usd.closest('button, [role="button"]') || usd).click();
+    setTimeout(() => {
+      const cad = [...document.querySelectorAll('button, [role="option"], [role="menuitem"], li, div, span')]
+        .find(el => visible(el) && el.childElementCount <= 2 && /^CAD\b/.test(norm(el.innerText)));
+      if (cad) { (cad.closest('button, [role="option"], [role="menuitem"], li') || cad).click(); sessionStorage.setItem('gcp-cad-done', '1'); }
+    }, 600);
+  }
+
   function collectr() {
     const wantLabel = GCP.gradeLabel(parts);
+    setTimeout(collectrToCAD, 1500);
     if (/\/explore\/product\//.test(location.pathname)) {
       status('Reading graded prices…');
+      const started = Date.now();
       watch(() => {
+        if (Date.now() - started < 3000 && pageCurrency() === 'USD' && !sessionStorage.getItem('gcp-cad-done')) return false;
         const prices = collectrGradePrices();
         if (!Object.keys(prices).length) return false;
         const title = norm((document.querySelector('h1') || {}).innerText);
         const raw = GCP.parsePrice(norm(document.body.innerText).slice(0, 2000).match(/\$\s?[\d,]+\.\d{2}/) || '');
-        send({ type: 'frame-sales', rows: [], product: title, gradePrices: prices, marketPrice: prices[wantLabel] ?? null, rawPrice: raw });
+        send({ type: 'frame-sales', rows: [], product: title, gradePrices: prices, marketPrice: prices[wantLabel] ?? null, rawPrice: raw, cur: pageCurrency() || 'USD' });
         setTimeout(() => focusLegend(wantLabel), 300);
         return true;
       }, 20000, () => send({
@@ -186,7 +215,10 @@
       if (seen.has(t)) continue;
       seen.add(t);
       const link = el.closest('a') || el.querySelector('a');
-      rows.push({ price: GCP.parsePrice(prices[prices.length - 1]), date: date.toISOString(), title: t.slice(0, 160), url: link ? link.href : location.href, scoped: !requireSoldWord });
+      const money = GCP.parseMoney(prices[prices.length - 1]);
+      const exact = GCP.parseDateTime(t);
+      rows.push({ price: money && money.amount, cur: (money && money.cur) || pageCurrency() || 'USD', date: (exact || date).toISOString(), exact: !!exact,
+        title: t.slice(0, 160), url: link ? link.href : location.href, scoped: !requireSoldWord });
       if (rows.length >= 100) break;
     }
     return rows;
@@ -211,7 +243,8 @@
     const text = norm(document.body.innerText);
     const altValue = (text.match(/alt value[^$]{0,20}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
     const lastSale = (text.match(/last (?:sale|sold)[^$]{0,20}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
-    return { rows, marketPrice: altValue ? GCP.parsePrice(altValue) : lastSale ? GCP.parsePrice(lastSale) : null, signedOut: /sign up \/ log in|log in to see|sign in to view/i.test(text) };
+    const mp = GCP.parseMoney(altValue || lastSale || '');
+    return { rows, marketPrice: mp ? mp.amount : null, cur: (mp && mp.cur) || pageCurrency() || 'USD', signedOut: /sign up \/ log in|log in to see|sign in to view/i.test(text) };
   }
 
   function alt() {
@@ -224,12 +257,12 @@
       watch(() => {
         const r = altSold();
         const sig = r.rows.length + ':' + r.marketPrice;
-        if (sig !== last) { last = sig; send({ type: 'frame-sales', rows: r.rows, marketPrice: r.marketPrice, product: norm((document.querySelector('h1, h2') || {}).innerText).slice(0, 80) }); }
+        if (sig !== last) { last = sig; send({ type: 'frame-sales', rows: r.rows, marketPrice: r.marketPrice, cur: r.cur, product: norm((document.querySelector('h1, h2') || {}).innerText).slice(0, 80) }); }
         return r.rows.length >= 3;
       }, 20000, () => {
         const r = altSold();
         send({
-          type: 'frame-sales', rows: r.rows, marketPrice: r.marketPrice,
+          type: 'frame-sales', rows: r.rows, marketPrice: r.marketPrice, cur: r.cur,
           note: r.rows.length ? '' : r.signedOut ? 'Alt only shows sold history when you’re signed in. Open the phone window and log in.' : 'No sold history visible on this Alt page.'
         });
       });
@@ -245,12 +278,27 @@
     });
   }
 
+  // ---------------------------------------------------------------- Card Ladder
+  function cardladder() {
+    status('Reading Card Ladder sales…');
+    let last = '';
+    watch(() => {
+      const rows = rowsIn(document.querySelector('main') || document.body, false).map(r => ({ ...r, scoped: false }));
+      const sig = rows.length + ':' + (rows[0] && rows[0].title);
+      if (rows.length && sig !== last) { last = sig; send({ type: 'frame-sales', rows, marketPrice: null, cur: pageCurrency() || 'USD' }); }
+      return rows.length >= 10;
+    }, 25000, () => {
+      const signedOut = /log ?in|sign ?in|subscribe/i.test(norm(document.body.innerText).slice(0, 3000));
+      if (!last) send({ type: 'frame-sales', rows: [], marketPrice: null, note: signedOut ? 'Sign in to Card Ladder in the 📱 window to see sales history.' : 'No sales found on Card Ladder for this search.' });
+    });
+  }
+
   // SPA route changes: re-run when the path changes.
   let lastPath = '';
   function route() {
     if (location.pathname + location.search === lastPath) return;
     lastPath = location.pathname + location.search;
-    (platform === 'collectr' ? collectr : alt)();
+    ({ collectr, alt, cardladder })[platform]();
   }
   route();
   setInterval(route, 1000);

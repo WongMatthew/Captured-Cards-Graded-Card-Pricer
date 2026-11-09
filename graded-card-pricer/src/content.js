@@ -7,7 +7,7 @@
 
   let last = '';
   let timer = null;
-  let opts = { autoScan: true, pokemonOnly: true };
+  let opts = { autoScan: false, pokemonOnly: true };
 
   // When an email is open, read only that email (subject + bodies), not the inbox list around it.
   function readableText() {
@@ -48,9 +48,11 @@
     chrome.runtime.sendMessage({ type: 'detections', url: location.href, title: document.title, cards }).catch(() => {});
   }
 
-  function schedule() { if (!timer) timer = setTimeout(scan, 1000); }
+  function schedule() { if (!timer) timer = setTimeout(scan, 2500); }
 
-  chrome.storage.sync.get({ autoScan: true, pokemonOnly: true }, (o) => {
+  // Background scanning is opt-in (Settings → "Keep scanning pages"). By default the page is only read when
+  // the side panel asks: once when the panel opens, then whenever the user presses Scan.
+  chrome.storage.sync.get({ autoScan: false, pokemonOnly: true }, (o) => {
     opts = o;
     if (!o.autoScan) return;
     scan();
@@ -65,9 +67,11 @@
       let cards = sel ? detect(sel) : [];
       if (sel && !cards.length) cards = GCP.detectCards(sel, { max: 5, pokemonOnly: false });
       const fromSelection = !!cards.length && !!sel;
+      const text = sel || readableText();
       if (!cards.length) cards = detect(readableText());
+      const certs = GCP.detectCerts(text);
       last = '';
-      reply({ cards, url: location.href, title: document.title, fromSelection });
+      reply({ cards, certs, url: location.href, title: document.title, fromSelection });
     }
   });
 })();

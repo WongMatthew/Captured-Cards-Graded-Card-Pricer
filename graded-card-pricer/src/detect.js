@@ -262,8 +262,15 @@
   function splitQuery(q) {
     q = String(q || '');
     const g = findGrades(q)[0] || null;
-    const number = extractNumber(q);
-    const name = cleanName(q.replace(CARD_NO_RE_G, ' '));
+    let number = extractNumber(q);
+    let rest = q.replace(CARD_NO_RE_G, ' ');
+    if (!number) {
+      // A typed search like "luigi pikachu 295 PSA 10": a bare 1–3 digit number (not the grade, not a year) is the card number.
+      const noGrade = q.replace(gradeReG(), ' ');
+      const bare = [...noGrade.matchAll(/(?:^|\s)(\d{1,3})(?=\s|$)/g)].pop();
+      if (bare) { number = bare[1]; rest = noGrade.replace(new RegExp('(^|\\s)' + bare[1] + '(?=\\s|$)'), ' ') + ' ' + (g ? gradeLabel(g) : ''); }
+    }
+    const name = cleanName(rest);
     const variants = Object.keys(VARIANTS).filter(k => VARIANTS[k].test(q));
     const words = name.toLowerCase().split(/\s+/).filter(Boolean);
     // The key word is the Pokémon / trainer name: a known name if present, else the first word that isn't a set or rarity word.
@@ -314,13 +321,66 @@
       const keys = allNumberKeys(title);
       if (keys.size && !keys.has(parts.numberKey)) return { ok: false, reason: `number #${[...keys][0]}` };
     }
+    const allow = parts.allowVariants || [];
     for (const [v, re] of Object.entries(VARIANTS)) {
+      if (allow.includes(v)) continue; // this variant is part of the card itself (e.g. a Japanese-only promo)
       const inQ = (parts.variants || []).includes(v);
       const inT = re.test(title);
       if (inT && !inQ) return { ok: false, reason: v };
       if (inQ && !inT && v !== 'Sealed') return { ok: false, reason: `not ${v}` };
     }
     return { ok: true };
+  }
+
+  // Variants that most real sales of this card mention are part of the card, not a different version.
+  // e.g. every "Luigi Pikachu #295 PSA 10" sale says "Japanese" because no English version exists.
+  // Typing the variant (or "English") in the search always wins.
+  function inherentVariants(titles, parts) {
+    if (/\benglish\b/i.test(parts.name)) return [];
+    const base = { ...parts, variants: [], allowVariants: Object.keys(VARIANTS) };
+    const same = titles.filter(t => matchCard(t, base).ok);
+    if (same.length < 2) return [];
+    const out = [];
+    for (const [v, re] of Object.entries(VARIANTS)) {
+      if ((parts.variants || []).includes(v) || v === 'Sealed') continue;
+      const n = same.filter(t => re.test(t)).length;
+      if (n >= 2 && n / same.length >= 0.5) out.push(v);
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- cert numbers
+  // "PSA Cert #140688778", "Certification Number: 4061234001", "CGC 4061234001", a bare "140688778" typed in the search.
+  const CERT_RE = /\b(?:(PSA|CGC|BGS|Beckett|SGC|TAG)\b[^\n\d]{0,30}?)?(?:cert(?:ification)?|serial)\s*(?:#|no\.?|number|num)?\s*:?\s*#?\s*(\d{7,10})\b/gi;
+  const CERT_ONLY_RE = /^\s*(PSA|CGC|BGS|Beckett|SGC|TAG)?\s*(?:cert(?:ification)?)?\s*(?:#|no\.?|number)?\s*:?\s*#?\s*(\d{7,10})\s*$/i;
+
+  function guessGrader(cert, context) {
+    const near = String(context || '').match(/\b(PSA|CGC|BGS|Beckett|SGC|TAG)\b/i);
+    if (near) return normGrader(near[1]);
+    return String(cert).length === 10 ? 'CGC' : 'PSA';
+  }
+
+  function detectCerts(text) {
+    const out = new Map();
+    for (const m of String(text || '').matchAll(CERT_RE)) {
+      const ctx = String(text).slice(Math.max(0, m.index - 25), m.index + m[0].length + 10);
+      const grader = m[1] ? normGrader(m[1]) : guessGrader(m[2], ctx);
+      out.set(m[2], { grader, cert: m[2], guessed: !m[1] && !/\b(PSA|CGC|BGS|Beckett|SGC|TAG)\b/i.test(ctx) });
+    }
+    return [...out.values()];
+  }
+
+  function parseCertQuery(q) {
+    const m = String(q || '').match(CERT_ONLY_RE);
+    return m ? { grader: m[1] ? normGrader(m[1]) : guessGrader(m[2]), cert: m[2], guessed: !m[1] } : null;
+  }
+
+  // Grade text from a slab / cert page: "GEM MT 10", "MINT 9", "Pristine 10", "9.5", "Black Label 10"
+  function parseGradeText(grader, text) {
+    const t = String(text || '');
+    const n = (t.match(/(10|\d(?:\.5)?)(?!\d)/) || [])[1];
+    if (!n) return null;
+    return { grader, grade: n, qual: /black\s*label/i.test(t) ? 'BL' : grader !== 'PSA' && /pristine/i.test(t) ? 'PRISTINE' : '' };
   }
 
   // ---------------------------------------------------------------- prices & dates
@@ -334,6 +394,31 @@
 
   const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11 };
   const MON = '(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\\.?';
+
+  // Price with its currency: "C $1,234.56" → {amount, cur:'CAD'}, "US $45" → USD, "£30" → GBP, "1,234.00 CAD" → CAD.
+  // A bare "$" has cur:null (the caller knows the site's currency).
+  const PREFIX_CUR = { US: 'USD', C: 'CAD', CA: 'CAD', CAD: 'CAD', AU: 'AUD', A: 'AUD', NZ: 'NZD', HK: 'HKD', SG: 'SGD', S: 'SGD' };
+  function parseMoney(s) {
+    s = String(s || '').replace(/\u00a0/g, ' ');
+    const num = '(\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?)';
+    let m = s.match(new RegExp('(?:\\b(US|CAD|CA|C|AU|A|NZ|HK|SG|S)\\s?)?\\$\\s?' + num + '(?:\\s?(USD|CAD|AUD|NZD|HKD|SGD)\\b)?'));
+    if (m) return { amount: parseFloat(m[2].replace(/,/g, '')), cur: m[3] || (m[1] ? PREFIX_CUR[m[1].toUpperCase()] : null) };
+    if ((m = s.match(new RegExp('£\\s?' + num)))) return { amount: parseFloat(m[1].replace(/,/g, '')), cur: 'GBP' };
+    if ((m = s.match(new RegExp('€\\s?' + num + '|' + num + '\\s?€')))) return { amount: parseFloat((m[1] || m[2]).replace(/,/g, '')), cur: 'EUR' };
+    if ((m = s.match(new RegExp('[¥￥]\\s?' + num)))) return { amount: parseFloat(m[1].replace(/,/g, '')), cur: 'JPY' };
+    if ((m = s.match(new RegExp(num + '\\s?(USD|CAD|GBP|EUR|AUD|JPY|NZD|HKD|SGD)\\b')))) return { amount: parseFloat(m[1].replace(/,/g, '')), cur: m[2] };
+    return null;
+  }
+
+  // Exact sale time when the text has one ("Thu 30 Oct 2026 18:22:54 GMT", ISO timestamps); otherwise null.
+  function parseDateTime(s) {
+    s = String(s || '');
+    let m = s.match(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})\b/);
+    if (m) { const d = new Date(m[0]); return isNaN(d) ? null : d; }
+    m = s.match(/\b(\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:GMT|UTC|Z|[+-]\d{4}))/);
+    if (m) { const d = new Date(m[1].replace(/\bZ$/, 'GMT')); return isNaN(d) ? null : d; }
+    return null;
+  }
 
   // Returns a Date (local midnight) or null.
   function parseDate(s, now = new Date()) {
@@ -383,15 +468,16 @@
   }
 
   const WINDOWS = [
-    { key: '1d', label: 'Last 1 day', short: '1D', days: 1 },
+    { key: '1d', label: 'Today', short: '1D', days: 1 },
     { key: '3d', label: 'Last 3 days', short: '3D', days: 3 },
     { key: '5d', label: 'Last 5 days', short: '5D', days: 5 },
-    { key: '7d', label: 'Last week', short: '7D', days: 7 }
+    { key: '7d', label: 'Last 7 days', short: '7D', days: 7 }
   ];
 
-  // Sale dates only have day precision, so "last N days" = sold on any of the N most recent
-  // calendar days *before today*, plus today. (1 day = today + yesterday.)
-  const inWindow = (s, days, now) => { const d = daysAgo(s.date, now); return d >= 0 && d <= days; };
+  // Calendar days in the user's own time zone, counting today: "Today" = sold today, "Last 3 days" = today and
+  // the 2 days before. Sales with an exact time are placed on the user's local date; date-only sales use the
+  // date the site shows.
+  const inWindow = (s, days, now) => { const d = daysAgo(s.date, now); return d >= 0 && d < days; };
 
   function windowStats(sales, now = new Date()) {
     const out = {};
@@ -402,7 +488,7 @@
   root.GCP = {
     GRADE_RE, CARD_NO_RE, CARD_NO_RE_G, WINDOWS, VARIANTS, detectCards, findGrades, gradeLabel, splitQuery, buildQuery,
     titleMatchesGrade, matchCard, parsePrice, parseDate, daysAgo, inWindow, stats, trimOutliers, windowStats, cleanName,
-    pokemonScore, extractNumber, numberKey, allNumberKeys, coreName
+    pokemonScore, parseMoney, parseDateTime, extractNumber, numberKey, allNumberKeys, coreName, inherentVariants, detectCerts, parseCertQuery, parseGradeText
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.GCP;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

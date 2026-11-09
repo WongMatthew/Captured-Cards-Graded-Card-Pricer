@@ -1,7 +1,7 @@
 // Service worker: side panel wiring, per-tab detections, context menu, network rules for the
 // embedded mini views, and phone-sized "companion" windows for Alt / Collectr.
 
-const EMBED_DOMAINS = ['alt.xyz', 'getcollectr.com', 'ebay.com', 'pricecharting.com', '130point.com'];
+const EMBED_DOMAINS = ['alt.xyz', 'getcollectr.com', 'cardladder.com', 'ebay.ca', 'ebay.com', 'pricecharting.com', '130point.com'];
 const MOBILE_DOMAINS = ['alt.xyz', 'getcollectr.com'];
 const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
 const TAB_ID_NONE = -1; // requests from the side panel's iframes are not tied to a tab
@@ -65,24 +65,30 @@ chrome.runtime.onInstalled.addListener(setup);
 chrome.runtime.onStartup.addListener(setup);
 installRules().catch(() => {});
 
-// ---------------------------------------------------------------- companion phone windows
-// platform -> { windowId, tabId }
-const companions = {};
+// ---------------------------------------------------------------- companion windows for signed-in sources
+// Alt, Collectr and Card Ladder need your own login, which embedded frames can't use. Each gets one real,
+// phone-sized window that you sign into once; it then follows every new search ("connected").
+// platform -> { windowId, tabId }, kept in session storage so it survives the worker restarting.
 const ruleIdFor = (tabId) => 1000 + (tabId % 900000);
+async function getCompanions() { return (await chrome.storage.session.get('companions')).companions || {}; }
+async function setCompanions(c) { await chrome.storage.session.set({ companions: c }); }
 
-async function openCompanion(platform, url) {
+async function openCompanion(platform, url, { focus = true } = {}) {
+  const companions = await getCompanions();
   const existing = companions[platform];
   if (existing) {
     try {
       await chrome.tabs.update(existing.tabId, { url });
-      await chrome.windows.update(existing.windowId, { focused: true });
-      return;
-    } catch (e) { delete companions[platform]; }
+      if (focus) await chrome.windows.update(existing.windowId, { focused: true });
+      return true;
+    } catch (e) { delete companions[platform]; await setCompanions(companions); }
   }
-  // Create blank first so the mobile rule is in place before the site loads.
+  if (!focus) return false; // follow-only: never pops a new window by itself
+  // Create blank first so the phone headers are in place before the site loads.
   const win = await chrome.windows.create({ url: 'about:blank', type: 'popup', width: 410, height: 860, focused: true });
   const tabId = win.tabs[0].id;
   companions[platform] = { windowId: win.id, tabId };
+  await setCompanions(companions);
   await chrome.declarativeNetRequest.updateSessionRules({
     removeRuleIds: [ruleIdFor(tabId)],
     addRules: [{
@@ -92,15 +98,23 @@ async function openCompanion(platform, url) {
     }]
   });
   await chrome.tabs.update(tabId, { url });
+  return true;
 }
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+chrome.tabs.onRemoved.addListener(async (tabId) => {
   chrome.storage.session.remove('tab:' + tabId);
+  const companions = await getCompanions();
+  let changed = false;
   for (const [p, c] of Object.entries(companions)) {
     if (c.tabId === tabId) {
       delete companions[p];
+      changed = true;
       chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleIdFor(tabId)] }).catch(() => {});
     }
+  }
+  if (changed) {
+    await setCompanions(companions);
+    chrome.runtime.sendMessage({ type: 'companions-changed' }).catch(() => {});
   }
 });
 
@@ -108,14 +122,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === 'detections' && sender.tab) {
     const tabId = sender.tab.id;
-    if (Object.values(companions).some(c => c.tabId === tabId)) return;
     chrome.storage.session.set({ ['tab:' + tabId]: { url: msg.url, title: msg.title, cards: msg.cards, at: Date.now() } });
     const n = msg.cards.length;
     chrome.action.setBadgeText({ tabId, text: n ? String(n) : '' });
     chrome.action.setBadgeBackgroundColor({ tabId, color: '#e5484d' });
     chrome.runtime.sendMessage({ type: 'detections-updated', tabId }).catch(() => {});
   } else if (msg.type === 'open-companion') {
-    openCompanion(msg.platform, msg.url).then(() => reply({ ok: true }), e => reply({ ok: false, error: String(e) }));
+    openCompanion(msg.platform, msg.url, { focus: msg.focus !== false })
+      .then(ok => { reply({ ok }); chrome.runtime.sendMessage({ type: 'companions-changed' }).catch(() => {}); }, e => reply({ ok: false, error: String(e) }));
+    return true;
+  } else if (msg.type === 'list-companions') {
+    getCompanions().then(c => reply(Object.keys(c)));
     return true;
   }
 });

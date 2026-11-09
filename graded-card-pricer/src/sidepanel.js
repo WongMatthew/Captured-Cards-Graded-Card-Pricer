@@ -43,7 +43,9 @@ async function refreshDetections() {
   const data = (await chrome.storage.session.get('tab:' + tab.id))['tab:' + tab.id];
   renderChips(data ? data.cards : []);
   const top = data && data.cards[0];
-  if (settings.autoSearch && top && !autoSearched.has(tab.id + '|' + top.query)) {
+  // Marketplace tabs (e.g. the eBay results you opened) only update the chips; they never replace your search.
+  const marketplace = /(^|\.)(ebay\.com|pricecharting\.com|130point\.com|alt\.xyz|getcollectr\.com)$/.test(new URL(tab.url || 'about:blank').hostname);
+  if (settings.autoSearch && !marketplace && top && !autoSearched.has(tab.id + '|' + top.query)) {
     autoSearched.add(tab.id + '|' + top.query);
     // Don't hijack a search the user typed; do follow when they switch emails.
     if (!state.query || state.auto) search(top.query, { auto: true, askPrice: top.askPrice });
@@ -168,7 +170,7 @@ async function runFetch(id, cfg, force) {
     classify(id);
   } catch (e) {
     if (sid !== state.sid) return;
-    Object.assign(r, { status: 'error', error: e.name === 'AbortError' ? 'Timed out' : (e.message || String(e)) });
+    Object.assign(r, { status: 'error', blocked: !!e.blocked, error: e.name === 'AbortError' ? 'Timed out' : (e.message || String(e)) });
   }
   renderPlatform(id);
   aggregate();
@@ -290,6 +292,18 @@ chrome.runtime.onMessage.addListener((msg) => {
     r.status = r.sales.length || r.marketPrice != null || r.gradePrices ? 'ok' : msg.note ? 'empty' : 'loading';
     renderPlatform(msg.platform);
     aggregate();
+  } else if (msg.type === 'ebay-page-sales') {
+    // Sales read from an eBay sold-results tab the user opened.
+    const r = state.results.ebay;
+    if (!r || !state.parts) return;
+    const nkw = msg.nkw.toLowerCase();
+    if (state.parts.keyWord && !nkw.includes(state.parts.keyWord.toLowerCase())) return;
+    const sales = msg.sales.map(x => ({ ...x, date: new Date(x.date) }));
+    Object.assign(r, { status: 'ok', blocked: false, raw: sales, pageUrl: msg.url, note: 'Read from your open eBay tab.' });
+    classify('ebay');
+    cachePut('ebay', state.query, { url: msg.url, sales }).catch(() => {});
+    renderPlatform('ebay');
+    aggregate();
   } else if (msg.type === 'detections-updated' && msg.tabId === activeTabId) {
     refreshDetections();
   } else if (msg.type === 'pending-query') {
@@ -386,7 +400,13 @@ function renderPlatform(id) {
   statsEl.innerHTML = bits.join('');
 
   const note = card.querySelector('.pnote');
-  const noteText = r.status === 'error' ? `${r.error}. Try Mini view or Open ↗.` : r.note || '';
+  const noteText = r.status === 'error'
+    ? (r.blocked && id === 'ebay'
+      ? `eBay turned away the panel's background request (${r.error}). Click “Open sold results ↗”: the panel reads the sales from that eBay tab as soon as it loads.`
+      : `${r.error}. Try Mini view or Open ↗.`)
+    : r.note || '';
+  const openA = card.querySelector('.open');
+  openA.textContent = id === 'ebay' && r.status === 'error' && r.blocked ? 'Open sold results ↗' : 'Open ↗';
   note.hidden = !noteText;
   note.className = 'pnote' + (r.status === 'error' ? ' err' : '');
   note.textContent = noteText;

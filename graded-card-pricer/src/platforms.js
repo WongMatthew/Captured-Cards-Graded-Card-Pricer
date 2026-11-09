@@ -89,10 +89,11 @@
 
   async function ebay(query, cfg, parts) {
     const url = fill(cfg.url, ebayQuery(parts));
-    const { html } = await getText(url);
+    let html;
+    try { ({ html } = await getText(url)); } catch (e) { if (/Blocked/.test(e.message)) e.blocked = true; throw e; }
     const doc = toDoc(html);
     if (/captcha|pardon our interruption|security measure|verify yourself/i.test(txt(doc.querySelector('title')) + ' ' + txt(doc.querySelector('h1'))))
-      throw new Error('eBay wants a captcha. Open eBay in a tab, solve it, then press Refresh.');
+      throw Object.assign(new Error('eBay asked for a security check'), { blocked: true });
     return { url, sales: parseEbay(doc) };
   }
 

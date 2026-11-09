@@ -36,7 +36,7 @@ prices from eBay, PriceCharting, 130point, Alt and Collectr in one side panel.
 
 | Platform | How | Notes |
 |---|---|---|
-| eBay | Sold + Completed search, with lots and proxies excluded in the query | Uses your browser session. Stops at eBay's "results matching fewer words" section. Non-USD prices are ignored. |
+| eBay | Sold + Completed search, with lots and proxies excluded in the query | Uses your browser session. Stops at eBay's "results matching fewer words" section; non-USD prices are ignored. If eBay turns away the background request, the eBay card shows **Open sold results ↗**. Opening it loads the page in a normal tab, and the panel reads the sales from that page. |
 | PriceCharting | Picks the matching product, then reads its completed-sales tables | Product is picked by card number and name; variants (1st Ed, Base Set 2…) are avoided. |
 | 130point | Its sales search | Supplies the real price for accepted best offers. |
 | Alt | Opens the matching item, then reads only rows marked as sold or listed under a sales-history heading | Browse results are **active listings** and are never counted. Alt only shows sold history to signed-in users, so use **📱 Phone** and log in. |

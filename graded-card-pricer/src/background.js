@@ -1,7 +1,7 @@
 // Service worker: side panel wiring, per-tab detections, context menu, network rules for the
 // embedded mini views, and phone-sized "companion" windows for Alt / Collectr.
 
-const EMBED_DOMAINS = ['alt.xyz', 'getcollectr.com', 'cardladder.com', 'ebay.ca', 'ebay.com', 'pricecharting.com', '130point.com'];
+const EMBED_DOMAINS = ['snkrdunk.com', 'alt.xyz', 'getcollectr.com', 'cardladder.com', 'ebay.ca', 'ebay.com', 'pricecharting.com', '130point.com'];
 const MOBILE_DOMAINS = ['alt.xyz', 'getcollectr.com'];
 const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
 const TAB_ID_NONE = -1; // requests from the side panel's iframes are not tied to a tab
@@ -85,7 +85,9 @@ async function openCompanion(platform, url, { focus = true } = {}) {
   }
   if (!focus) return false; // follow-only: never pops a new window by itself
   // Create blank first so the phone headers are in place before the site loads.
-  const win = await chrome.windows.create({ url: 'about:blank', type: 'popup', width: 410, height: 860, focused: true });
+  // Phone-sized for Alt / Collectr (their mobile views); desktop-sized for Terapeak / Card Ladder (wide tables).
+  const wide = platform === 'terapeak' || platform === 'cardladder';
+  const win = await chrome.windows.create({ url: 'about:blank', type: 'popup', width: wide ? 1100 : 410, height: wide ? 820 : 860, focused: true });
   const tabId = win.tabs[0].id;
   companions[platform] = { windowId: win.id, tabId };
   await setCompanions(companions);

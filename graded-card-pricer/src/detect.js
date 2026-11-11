@@ -57,7 +57,16 @@
     if (!n) return '';
     const first = String(n).toUpperCase().split('/')[0].replace(/\s+/g, '');
     const m = first.match(/^([A-Z]*)0*(\d+)$/);
-    return m ? m[1] + m[2] : first;
+    if (!m) return first;
+    // Black Star promo prefixes aren't part of the number: "SVP 051" = "#051" = "051/SV-P". Gallery/subset prefixes are.
+    if (/^(SVP|SVE|SV|SWSH|SM|XY|BW|DP|HGSS)$/.test(m[1])) return m[2];
+    return m[1] + m[2];
+  }
+  // Set size after the slash: "090/088" → "88". Different set size = different set.
+  function totalKeys(text) {
+    const out = new Set();
+    for (const m of String(text).matchAll(/\b[A-Z]{0,4}\d{1,3}\s?\/\s?[A-Z]{0,4}0*(\d{1,3})\b/gi)) out.add(m[1]);
+    return out;
   }
   function allNumberKeys(text) {
     const keys = new Set();
@@ -250,10 +259,16 @@
     'Stamped': /\bstamped\b|\bstamp\b/i,
     'Print run': /\b(2nd|3rd|4th)\s*print\b|\(uk\)|\buk\s*print\b/i,
     'Gold/Metal': /\bgold\s*metal\b|\bmetal\b/i,
-    'Sealed': /\bsealed\b|\bbooster\b|\bbox\b|\betb\b|\bpack\b/i
   };
   const NAMES = new Set(POKEMON_HINTS.slice(POKEMON_HINTS.indexOf('charizard')));
   const SET_WORDS = new Set(POKEMON_HINTS.slice(0, POKEMON_HINTS.indexOf('charizard')).join(' ').split(/\s+/));
+  const OPPOSITE = {
+    '1st Edition': /\bunlimited\b|\bunl\b/i,
+    'Shadowless': /\bshadow(ed)?\b(?!less)/i,
+    'Japanese': /\benglish\b|\beng\b/i,
+    'Korean': /\benglish\b|\bjapanese\b/i,
+    'Chinese': /\benglish\b|\bjapanese\b/i
+  };
   const TYPE_STRICT = ['vmax', 'vstar', 'gx', 'v-union', 'break', 'lv.x', 'tag team'];
   const GENERIC = new Set(('holo holofoil rare secret alt alternate art full illustration special ultra hyper gold rainbow ' +
     'promo set base edition trainer gallery sir ir fa aa sar ar chr ex v vmax vstar gx unlimited shadowless 1st reverse ' +
@@ -277,7 +292,7 @@
     const known = words.find(w => NAMES.has(w.replace(/[^a-z-]/g, '')));
     const keyWords = known ? [known] : words.filter(w => !GENERIC.has(w) && !SET_WORDS.has(w) && !/\d/.test(w));
     return {
-      name, number, numberKey: numberKey(number),
+      name, number, numberKey: numberKey(number), totalKey: [...totalKeys(number)][0] || '',
       grader: g ? g.grader : '', grade: g ? g.grade : '', qual: g ? g.qual : '',
       variants, types: TYPE_STRICT.filter(t => new RegExp('(^|[^a-z])' + t.replace('.', '\\.') + '([^a-z]|$)', 'i').test(name)),
       keyWord: keyWords[0] || words[0] || ''
@@ -321,13 +336,20 @@
       const keys = allNumberKeys(title);
       if (keys.size && !keys.has(parts.numberKey)) return { ok: false, reason: `number #${[...keys][0]}` };
     }
+    if (parts.totalKey) {
+      const totals = totalKeys(title);
+      if (totals.size && !totals.has(parts.totalKey)) return { ok: false, reason: `different set (/${[...totals][0]})` };
+    }
     const allow = parts.allowVariants || [];
     for (const [v, re] of Object.entries(VARIANTS)) {
       if (allow.includes(v)) continue; // this variant is part of the card itself (e.g. a Japanese-only promo)
       const inQ = (parts.variants || []).includes(v);
       const inT = re.test(title);
+      // A version the listing names but you didn't ask for is a different card (1st Edition, Japanese, …).
       if (inT && !inQ) return { ok: false, reason: v };
-      if (inQ && !inT && v !== 'Sealed') return { ok: false, reason: `not ${v}` };
+      // A version you asked for that the listing just doesn't mention is fine (sellers often leave it out);
+      // only reject when the listing says the opposite.
+      if (inQ && !inT && OPPOSITE[v] && OPPOSITE[v].test(title)) return { ok: false, reason: `not ${v}` };
     }
     return { ok: true };
   }
@@ -347,6 +369,23 @@
       if (n >= 2 && n / same.length >= 0.5) out.push(v);
     }
     return out;
+  }
+
+  // When you didn't type the set size, learn it from the sales: if most listings of this card number say "/088",
+  // a "/128" listing is a different set's card with the same number.
+  function dominantTotal(titles, parts) {
+    if (parts.totalKey || !parts.numberKey) return '';
+    const counts = {};
+    let n = 0;
+    for (const t of titles) {
+      if (!matchCard(t, parts).ok) continue;
+      const tk = [...totalKeys(t)];
+      if (!tk.length) continue;
+      n++;
+      for (const k of tk) counts[k] = (counts[k] || 0) + 1;
+    }
+    const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    return best && best[1] >= 3 && best[1] / n >= 0.6 ? best[0] : '';
   }
 
   // ---------------------------------------------------------------- cert numbers
@@ -426,7 +465,11 @@
     let m;
     const day = (y, mo, d) => { const dt = new Date(y, mo, d); return isNaN(dt) || dt.getDate() !== d ? null : dt; };
     const fixYear = (dt) => { if (dt && dt - now > 864e5) dt.setFullYear(dt.getFullYear() - 1); return dt; };
-    if ((m = s.match(/\b(\d{4})-(\d{2})-(\d{2})\b/))) return day(+m[1], +m[2] - 1, +m[3]);
+    if ((m = s.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/))) return day(+m[1], +m[2] - 1, +m[3]);
+    if ((m = s.match(/(\d+)\s*(分|時間|日|週間)前/))) {
+      const n = +m[1], ms = m[2] === '分' ? n * 6e4 : m[2] === '時間' ? n * 36e5 : m[2] === '日' ? n * 864e5 : n * 6048e5;
+      const dt = new Date(now - ms); return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+    }
     if ((m = s.match(new RegExp('\\b' + MON + '\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})', 'i')))) return day(+m[3], MONTHS[m[1].toLowerCase()], +m[2]);
     if ((m = s.match(new RegExp('\\b(\\d{1,2})\\s+' + MON + ',?\\s+(\\d{4})', 'i')))) return day(+m[3], MONTHS[m[2].toLowerCase()], +m[1]);
     if ((m = s.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})\b/))) return day(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[1] - 1, +m[2]);
@@ -488,7 +531,7 @@
   root.GCP = {
     GRADE_RE, CARD_NO_RE, CARD_NO_RE_G, WINDOWS, VARIANTS, detectCards, findGrades, gradeLabel, splitQuery, buildQuery,
     titleMatchesGrade, matchCard, parsePrice, parseDate, daysAgo, inWindow, stats, trimOutliers, windowStats, cleanName,
-    pokemonScore, parseMoney, parseDateTime, extractNumber, numberKey, allNumberKeys, coreName, inherentVariants, detectCerts, parseCertQuery, parseGradeText
+    pokemonScore, parseMoney, parseDateTime, extractNumber, numberKey, allNumberKeys, coreName, VARIANTS_WORDS: new Set('japanese english korean chinese 1st first edition shadowless unlimited reverse holo promo'.split(' ')), inherentVariants, dominantTotal, totalKeys, detectCerts, parseCertQuery, parseGradeText
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.GCP;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

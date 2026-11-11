@@ -1,4 +1,4 @@
-# Graded Card Pricer (Chrome extension) · v3.1
+# Graded Card Pricer (Chrome extension) · v4.1
 
 Reads the email or page you have open, finds graded Pokémon cards ("Umbreon VMAX 215/203 PSA 10",
 "Charizard Base Set 4/102 BGS 9.5", PSA slab text like "#215 UMBREON VMAX GEM MT 10"), and shows recent **sold**
@@ -28,6 +28,65 @@ prices from eBay, PriceCharting, 130point, Alt and Collectr in one side panel.
 1. Go to `chrome://extensions` and turn on **Developer mode**.
 2. Click **Load unpacked** and pick this `graded-card-pricer` folder. If an older version is loaded, remove it first or press its reload ↻ button.
 3. Reload any open Gmail tabs so the new scanner runs there.
+
+## How prices are gathered (v4)
+
+- **Search wide, filter locally.** Each site is searched with just the Pokémon name, card type, number (both "90" and
+  "090") and grade. Set names, edition and language are checked on the results instead, because sellers word them
+  differently.
+- **Exact card, exact grade.** A listing is rejected only for something it actually says:
+  - a different grade;
+  - a different number or set size ("090/128" when the card's sales say "/088");
+  - a different card type (V vs VMAX);
+  - a version you didn't ask for (e.g. "Unlimited", "English", "1st Edition");
+  - a lot or proxy.
+
+  A listing that just leaves out "1st Edition" or "Japanese" still counts. Every rejected listing shows its reason, with **Use** to override.
+- **Every matching sale counts.** Best offers count, using 130point's real accepted price when it has one. Nothing is
+  trimmed. The same eBay item reported by several sites counts once.
+- **All in CAD.** Other currencies are converted at the Bank of Canada daily rate and marked "≈".
+- **Summary:**
+  - Today, 3-day, 5-day and 7-day averages.
+  - Last sale, plus the average and low–high of the **last 10 sales**, so thinly traded cards still get a price.
+  - 30-day average, a 90-day trend line, and every sale listed newest first.
+
+| Source | What's read | Needs |
+|---|---|---|
+| eBay.ca | Sold listings (up to 3 pages) | Nothing |
+| **Terapeak** | eBay's own research tool (Seller Hub → Research): sold listings with actual prices, incl. accepted best offers | Sign in to eBay in its 📱 window once (Terapeak is free in Seller Hub) |
+| 130point | eBay + auction-house sales, incl. real best-offer prices | Nothing |
+| PriceCharting | The exact product page (e.g. the 1st Edition version) and its graded sales | Nothing |
+| **SNKRDUNK** | Japan's largest card marketplace: sales history per grade (PSA 10/9, BGS 9.5/10/Black Label), ¥ → CAD | Nothing |
+| Card Ladder, Alt, Collectr | Your signed-in sales history / market price | 📱 Connect once |
+
+## Current listings (lowest asks)
+
+The cheapest matching **Buy It Now** listings on eBay.ca, in CAD with shipping, checked with the same exact-card and
+exact-grade rules as sales. The lowest ask is compared with the average of the last 10 sales. With eBay keys in Settings
+this uses eBay's standard listings API; without keys it reads eBay.ca's Buy It Now search. (eBay's sold-items API,
+Marketplace Insights, is closed to new apps, so the keys are used for listings only.)
+
+## Cert lookups
+
+Type or scan a cert number. The extension tries **PSA's API** first (needs an approved key), then reads **PSA's cert page
+directly in the background**. Either way the card, its edition (Variety) and grade become the search. No tab opens.
+If PSA refuses both, the panel offers an "Open PSA cert page" button.
+
+## Card details & population
+
+Each search shows the card's image, set, card number and release date. A **population report** per grading company
+lists how many slabs exist at each grade, with your grade highlighted. Also shown: how many are graded higher, the total
+graded and the gem rate (share of 10s). Click any grade to price it.
+
+| Population source | What it gives | Needs |
+|---|---|---|
+| PSA's official API | Exact PSA count per grade (including half grades), your slab's pop / pop higher, and the slab photos (front / back) | A cert lookup + an approved PSA API key (Settings → Test PSA key) |
+| PriceCharting | PSA and CGC grades 1–10 (census updated monthly) | Nothing: loads with every search |
+| Alt item page | PSA, BGS, CGC top grades (incl. 9.5, Black Label / Pristine) | Alt loaded or connected |
+| PSA cert page | Your slab's population and pop higher | Cert lookup without a key |
+
+For each grading company the panel uses PSA's official numbers when available, otherwise the most complete other source,
+and names the source under the chart.
 
 ## Currency: everything in CAD
 

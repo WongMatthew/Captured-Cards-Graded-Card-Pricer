@@ -136,3 +136,44 @@ assert.strictEqual(w2['7d'].count, 4, 'Last 7 days = today + 6 days before');
 const mig = GCPPlatforms.migrateSettings({ platforms: { ebay: { url: 'https://www.ebay.com/sch/i.html?_nkw={q}&LH_Sold=1' } } });
 assert(/ebay\.ca/.test(mig.platforms.ebay.url));
 console.log('v3.1 tests passed');
+
+// --- v3.2: graded promo cards whose titles mention the ETB they came in; Black Star promo number prefixes
+const sn = G.splitQuery('snorlax 051 PSA 10');
+for (const t of ['2023 Pokemon SVP 051 Snorlax 151 Elite Trainer Box Black Star Promo PSA 10',
+  'Snorlax #051 SV: Scarlet & Violet 151 ETB Promo PSA 10 Pokemon Card *TEW',
+  'Pokémon Snorlax #051 PSA 10 Gem Mint 151 ETB Promo (2023)']) assert(G.matchCard(t, sn).ok, t);
+assert(!G.matchCard('Snorlax 143/165 Pokemon 151 PSA 10', sn).ok);
+assert(!G.matchCard('Snorlax TG10 PSA 10', sn).ok, 'Trainer Gallery numbers stay distinct');
+assert(G.matchCard('Snorlax #051 PSA 10', G.splitQuery('Snorlax SVP 051 PSA 10')).ok);
+assert.strictEqual(G.numberKey('SWSH050'), '50');
+assert.strictEqual(G.numberKey('TG23/TG30'), 'TG23');
+console.log('v3.2 tests passed');
+
+// --- v3.3: population from PriceCharting product pages
+{
+  const html = `<script>VGPC.pop_data = {"cgc":[0,0,1,0,0,0,1,1,2,4],"psa":[4096,3573,5580,10192,16102,17851,16980,15931,8455,486]};</script>`;
+  const fakeDoc = { querySelectorAll: () => [] };
+  const r = GCPPlatforms.parsePriceChartingInfo(fakeDoc, html);
+  assert.strictEqual(r.pop.graders.PSA['10'], 486);
+  assert.strictEqual(r.pop.graders.PSA['9'], 8455);
+  assert.strictEqual(r.pop.graders.CGC['10'], 4);
+  assert.strictEqual(GCPPlatforms.parsePriceChartingInfo(fakeDoc, '<p>no pop</p>').pop, null);
+  console.log('v3.3 tests passed');
+}
+
+// --- v4: lenient on what sellers leave out, strict on what they state; set size learned from sales
+{
+  const g = G.splitQuery('Gengar EX Japanese Phantom Gate 1st Edition 90 PSA 10');
+  const titles = ['2014 Pokemon Japanese XY Phantom Gate 1st Edition #090 FA Gengar EX PSA 10', 'PSA10 Gengar EX 090/088 XY4 SR 1st Edition Japanese',
+    'Gengar EX 090/088 SR Full Art 1st ED', 'Pokemon Gengar EX Full Art 090/088 1st Edition', '2014 POKEMON JAPANESE XY #090 FA/GENGAR EX PSA 10'];
+  const gm = { ...g, totalKey: G.dominantTotal(titles, g) };
+  assert.strictEqual(gm.totalKey, '88');
+  for (const t of titles) assert(G.matchCard(t, gm).ok, t);
+  assert(!G.matchCard('Pokemon Gengar EX XY Phantom Gate Japanese UNLIMITED FA #090 PSA 10', gm).ok, 'unlimited is a different version');
+  assert(!G.matchCard('Gengar EX 090/088 PSA 10 English', gm).ok);
+  assert(!G.matchCard('Gengar ex 090/128 30th Celebration PSA 10', gm).ok, 'same number, different set');
+  assert.strictEqual(G.parseDate('2026/11/04', now).getDate(), 4);
+  assert.strictEqual(GCPPlatforms.ebayQuery(g).split(' -')[0], 'Gengar EX (90,090) PSA 10');
+  assert.strictEqual(GCPPlatforms.ebayQuery(G.splitQuery('Umbreon VMAX Evolving Skies 215/203 PSA 10')).split(' -')[0], 'Umbreon VMAX (215,215/203) PSA 10');
+  console.log('v4 tests passed');
+}

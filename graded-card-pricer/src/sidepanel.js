@@ -8,11 +8,11 @@ const money = (n, whole) => n == null || isNaN(n) ? '—' : n.toLocaleString('en
 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const shortDate = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-const CACHE_VER = 'v3';
+const CACHE_VER = 'v4';
 const CACHE_MS = 15 * 60 * 1000;
 const EMBED_WAIT_MS = 45000;
 const MOBILE_W = 390;
-const ORDER = ['ebay', '130point', 'pricecharting', 'cardladder', 'alt', 'collectr'];
+const ORDER = ['ebay', '130point', 'terapeak', 'pricecharting', 'snkrdunk', 'cardladder', 'alt', 'collectr'];
 const COMMON_GRADES = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS Black Label 10', 'BGS 10', 'BGS 9.5', 'BGS 9', 'CGC Pristine 10', 'CGC 10', 'CGC 9.5', 'CGC 9', 'SGC 10', 'TAG 10'];
 const GRADE_BAR = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS 10', 'BGS 9.5', 'BGS 9', 'CGC Pristine 10', 'CGC 10', 'CGC 9.5', 'SGC 10', 'TAG 10'];
 
@@ -20,7 +20,7 @@ let settings = structuredClone(P.DEFAULTS);
 let state = blank();
 let watchlist = {};
 let scanned = { tabId: null, title: '', cards: [], certs: [] };
-let rangeDays = 30;
+let rangeDays = 90; // trend chart: last 90 days
 let fx = null;          // Bank of Canada rates (for sources that only show US$)
 let secrets = {};       // PSA / eBay API keys (this computer only)
 let connected = [];     // login sources with a connected window
@@ -39,9 +39,9 @@ async function loadSettings() {
   for (const k of Object.keys(P.DEFAULTS)) if (k !== 'platforms' && k in s) settings[k] = s[k];
   if (s.platforms) for (const id of Object.keys(settings.platforms)) Object.assign(settings.platforms[id], s.platforms[id] || {});
   P.migrateSettings(settings);
-  $('#trim').checked = settings.trimOutliers;
-  $('#bestOffers').checked = !settings.excludeBestOffers;
-  $('#converted').checked = settings.includeConverted;
+  // Every sale counts: best offers included, nothing trimmed, everything converted to CAD.
+  settings.excludeBestOffers = false;
+  settings.includeConverted = true;
   secrets = await chrome.storage.local.get(P.SECRET_KEYS);
   settings.psaApiKey = secrets.psaApiKey || '';
 }
@@ -156,22 +156,29 @@ async function lookupCert(c) {
   $('#q').value = `${c.grader} ${c.cert}`;
   showSummaryShell(`${c.grader} cert #${c.cert}`, 'Looking up the slab…');
   renderChips();
-  try {
-    if (c.grader === 'PSA' && settings.psaApiKey) {
-      const info = await P.psaCertViaApi(c.cert, settings.psaApiKey);
-      return search(info.query, { cert: info });
-    }
-  } catch (e) {
-    $('#summaryMeta').textContent = e.message + ' · opening the cert page instead…';
+  const why = [];
+  if (c.grader === 'PSA' && settings.psaApiKey) {
+    try { const info = await P.psaCertViaApi(c.cert, settings.psaApiKey); return search(info.query, { cert: info }); }
+    catch (e) { why.push(e.message); }
   }
+  try { const info = await P.certViaWeb(c.grader, c.cert); return search(info.query, { cert: info }); }
+  catch (e) { why.push(e.message); }
+  // Couldn't read it without the website: offer it, don't force it.
   const make = P.CERT_PAGES[c.grader];
-  if (!make) { $('#summaryMeta').textContent = `Cert lookup isn’t supported for ${c.grader}.`; return; }
-  const readable = c.grader === 'PSA' || c.grader === 'CGC';
-  state.cert.status = readable ? 'waiting' : 'manual'; // before opening: the page can answer before tabs.create resolves
-  await chrome.tabs.create({ url: make(c.cert), active: true });
-  $('#summaryMeta').textContent = readable
-    ? `Opened the ${c.grader} cert page in a new tab. If it shows a security check, complete it: the card is read as soon as the details appear.`
-    : `Opened ${c.grader}'s lookup page. Type the card name shown there into the search box.`;
+  const meta = $('#summaryMeta');
+  meta.innerHTML = '';
+  meta.append(`Couldn’t look up this cert automatically (${why.join('; ')}). ` +
+    (c.grader === 'PSA' ? 'Once PSA approves your API key (Settings → Test PSA key), cert lookups are instant. For now: ' : ''));
+  if (make) {
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = `Open ${c.grader} cert page`;
+    b.onclick = async () => {
+      state.cert.status = 'waiting'; // the page is read as soon as it loads
+      await chrome.tabs.create({ url: make(c.cert), active: true });
+    };
+    meta.append(b, ' or type the card name and grade in the search box.');
+  }
 }
 
 function onCertInfo(info) {
@@ -211,6 +218,7 @@ async function search(q, opts = {}) {
   renderGradeBar();
   renderWatchButton();
 
+  runAsks();
   $('#sourcesBox').hidden = false;
   const box = $('#sources');
   box.innerHTML = '';
@@ -221,6 +229,7 @@ async function search(q, opts = {}) {
     state.src[id] = { id, status: embed ? 'idle' : 'loading', raw: [], sales: [], rejected: [], include: true, url: P.pageUrl(id, q, cfg, parts, settings) };
     box.appendChild(buildSource(id));
     if (!embed) runFetch(id, cfg, opts.force);
+    else if (id === 'snkrdunk') loadSnkrdunk();
     else if (connected.includes(id)) followInWindow(id);
     else if (id === 'collectr' && settings.autoCollectr) loadEmbed(id, { quiet: true });
     renderSource(id);
@@ -238,7 +247,8 @@ async function runFetch(id, cfg, force) {
       cachePut(id, q, data).catch(() => {});
     }
     if (sid !== state.sid) return;
-    Object.assign(r, { status: 'ok', url: data.url || r.url, product: data.product, raw: data.sales, cachedAt: data.cachedAt, note: data.note || '', via: data.via });
+    Object.assign(r, { status: 'ok', url: data.url || r.url, product: data.product, raw: data.sales, cachedAt: data.cachedAt, note: data.note || '', via: data.via,
+      pop: data.pop || null, info: data.info || null });
   } catch (e) {
     if (sid !== state.sid) return;
     Object.assign(r, { status: 'error', blocked: !!e.blocked, error: e.name === 'AbortError' ? 'Timed out' : (e.message || String(e)) });
@@ -254,6 +264,7 @@ function reclassify() {
   const titles = Object.values(state.src).flatMap(r => (r.raw || []).filter(s => !s.scoped).map(s => s.title || ''));
   state.allow = GCP.inherentVariants(titles, state.parts);
   state.partsM = { ...state.parts, allowVariants: state.allow };
+  if (!state.parts.totalKey) state.partsM.totalKey = GCP.dominantTotal(titles, state.partsM);
   Object.keys(state.src).forEach(classify);
   Object.keys(state.src).forEach(renderSource);
   aggregate();
@@ -274,7 +285,6 @@ function reasonFor(s) {
   }
   const m = GCP.matchCard(title, state.partsM);
   if (!m.ok) return m.reason;
-  if (s.bestOffer && !s.realBestOffer && settings.excludeBestOffers) return 'best offer (real price hidden)';
   return null;
 }
 
@@ -342,7 +352,7 @@ function buildSource(id) {
     node.querySelector('.live').hidden = true;
     const load = node.querySelector('.load');
     load.hidden = false;
-    load.onclick = () => loadEmbed(id);
+    load.onclick = () => (id === 'snkrdunk' ? loadSnkrdunk() : loadEmbed(id));
     const ph = node.querySelector('.phone');
     ph.hidden = false;
     ph.onclick = async () => {
@@ -352,7 +362,8 @@ function buildSource(id) {
       await chrome.runtime.sendMessage({ type: 'open-companion', platform: id, url: frameUrl(id) });
       refreshConnected();
     };
-    if (id !== 'collectr') node.querySelector('.load').hidden = true; // Alt / Card Ladder show nothing useful signed out
+    if (id === 'snkrdunk') ph.hidden = true; // public site: no login window needed
+    if (id !== 'collectr' && id !== 'snkrdunk') node.querySelector('.load').hidden = true; // Alt / Card Ladder show nothing useful signed out
   }
   return node;
 }
@@ -415,6 +426,8 @@ function renderSource(id) {
         : `${r.error}. Try Open ↗.`;
   } else if (r.status === 'ok' && !counted.length && r.rejected.length) {
     noteText = `${r.rejected.length} listings found, none match this exact card and grade. Check “filtered out” below.`;
+  } else if (r.status === 'idle' && id === 'snkrdunk') {
+    noteText = 'SNKRDUNK loads automatically with each search.';
   } else if (r.status === 'idle') {
     noteText = `${P.META[id].name} needs your login. Press “📱 Connect”, sign in once in the window that opens, and it will follow every search.` +
       (id === 'collectr' ? ' (“Load here” shows the public price without your account.)' : '');
@@ -463,6 +476,25 @@ function renderSource(id) {
 function frameUrl(id) {
   return state.src[id].url + '#gcp=' + encodeURIComponent(JSON.stringify({ q: state.query, sid: state.sid }));
 }
+// SNKRDUNK: pick the exact product from its (plain HTML) search, then read that product's sales history page.
+async function loadSnkrdunk() {
+  const r = state.src.snkrdunk, sid = state.sid;
+  r.status = 'loading';
+  r.progress = 'Finding the card…';
+  renderSource('snkrdunk');
+  try {
+    const hit = await P.snkrdunkFind(state.parts, settings.platforms.snkrdunk);
+    if (sid !== state.sid) return;
+    if (!hit) { Object.assign(r, { status: 'done', note: 'This card isn’t on SNKRDUNK (it mostly lists Japanese cards and popular English ones).' }); renderSource('snkrdunk'); return; }
+    Object.assign(r, { url: hit.url, product: hit.title });
+    loadEmbed('snkrdunk', { quiet: true });
+  } catch (e) {
+    if (sid !== state.sid) return;
+    Object.assign(r, { status: 'error', error: e.message });
+    renderSource('snkrdunk');
+  }
+}
+
 function followInWindow(id) {
   const r = state.src[id];
   r.status = 'loading';
@@ -528,6 +560,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     r.marketCur = cur;
     if (msg.gradePrices) r.gradePrices = Object.fromEntries(Object.entries(msg.gradePrices).map(([k, v]) => [k, cad(v)]));
     if (msg.product) r.product = msg.product;
+    if (msg.pop) r.pop = msg.pop;
     r.note = msg.note || '';
     r.pageUrl = msg.url;
     r.status = r.raw.length || r.marketPrice != null || r.gradePrices || msg.note ? 'ok' : 'loading';
@@ -586,7 +619,7 @@ function mergedAll() {
       const prev = out.get(s.key);
       if (!prev) { out.set(s.key, { ...s, sources: [id] }); continue; }
       if (!prev.sources.includes(id)) prev.sources.push(id);
-      if (s.realBestOffer && prev.bestOffer && !prev.realBestOffer) Object.assign(prev, { price: s.price, realBestOffer: true });
+      if (s.realBestOffer && prev.bestOffer && !prev.realBestOffer) Object.assign(prev, { price: s.price, realBestOffer: true, converted: s.converted, orig: s.orig });
       if (!prev.img && s.img) prev.img = s.img;
     }
   }
@@ -597,7 +630,7 @@ function aggregate() {
   if (!state.parts) return;
   const now = new Date();
   const all = mergedAll();
-  const trim = $('#trim').checked;
+  const trim = false;
   let week = all.filter(s => GCP.inWindow(s, 7, now));
   const before = week.length;
   if (trim) week = GCP.trimOutliers(week);
@@ -630,14 +663,18 @@ function aggregate() {
   // key stats: last sale, 7-day low / high, 30-day average
   const month = all.filter(s => GCP.inWindow(s, 30, now));
   const m30 = GCP.stats((trim ? GCP.trimOutliers(month) : month).map(s => s.price));
-  const lo = week.length ? week.reduce((a, b) => (b.price < a.price ? b : a)) : null;
-  const hi = week.length ? week.reduce((a, b) => (b.price > a.price ? b : a)) : null;
+  // The most recent sales give a price even when a card hasn't sold this week.
+  const recent = all.slice(0, 10);
+  const r10 = GCP.stats(recent.map(s => s.price));
+  const lo = recent.length ? recent.reduce((a, b) => (b.price < a.price ? b : a)) : null;
+  const hi = recent.length ? recent.reduce((a, b) => (b.price > a.price ? b : a)) : null;
   const last = all[0];
+  const span = recent.length > 1 ? `${shortDate(recent[recent.length - 1].date)} – ${shortDate(recent[0].date)}` : '';
   const ks = (cls, label, val, sub) => `<div class="ks ${cls}${busy && !val ? ' loading' : ''}"><span>${label}</span><b>${val || (busy ? '$0,000' : '—')}</b><small>${sub || '&nbsp;'}</small></div>`;
   $('#keystats').innerHTML =
     ks('', 'Last sale', last && money(last.price), last && `${shortDate(last.date)} · ${P.META[last.sources[0]].name}`) +
-    ks('low', 'Low · 7D', lo && money(lo.price), lo && shortDate(lo.date)) +
-    ks('high', 'High · 7D', hi && money(hi.price), hi && shortDate(hi.date)) +
+    ks('', `Avg · last ${recent.length || 10}`, r10 && money(r10.avg), span) +
+    ks('', 'Low – high', lo && `${money(lo.price, true)} – ${money(hi.price, true)}`, recent.length ? `last ${recent.length} sales` : '') +
     ks('', 'Avg · 30D', m30 && money(m30.avg), m30 && `${m30.count} sales`);
 
   // footer
@@ -653,28 +690,199 @@ function aggregate() {
   ].filter(Boolean).join(' · ');
 
   renderRecent(all, busy);
+  if (state.asks && state.asks.status === 'ok') renderAsks();
+  renderCardInfo();
   renderDeal();
   drawChart();
   renderGradesTable();
   maybeSnapshot();
 }
 
+// Accepted best offers: same card and grade, but eBay hides the real price. Shown in date order, never averaged.
+function bestOfferSales(counted) {
+  const have = new Set(counted.map(s => s.key));
+  const out = new Map();
+  for (const r of Object.values(state.src)) {
+    if (!r.include) continue;
+    for (const s of r.rejected) if (/^best offer/.test(s.reason) && !have.has(s.key) && !out.has(s.key)) out.set(s.key, { ...s, offer: true, sources: [r.id] });
+  }
+  return [...out.values()];
+}
+
 function renderRecent(all, busy) {
   const ol = $('#recent');
   ol.innerHTML = '';
-  const n = showAllSales ? 60 : 6;
-  $('#salesCount').textContent = all.length ? `${all.length} matching sale${all.length > 1 ? 's' : ''}` : '';
-  if (!all.length) {
+  const offers = bestOfferSales(all);
+  // Newest first; same-day sales keep the marketplace's own order (most recently ended first).
+  const rows = [...all, ...offers].sort((a, b) => b.date - a.date);
+  const SHOW = 10;
+  const n = showAllSales ? 80 : SHOW;
+  $('#salesCount').textContent = all.length ? `${all.length} matching sale${all.length > 1 ? 's' : ''}${offers.length ? ` + ${offers.length} best offer${offers.length > 1 ? 's' : ''}` : ''}` : '';
+  if (!rows.length) {
     const li = document.createElement('li');
     li.innerHTML = `<span class="empty-row">${busy ? 'Loading sales…' : 'No matching sales found. Open a source below to see what was filtered out.'}</span>`;
     ol.appendChild(li);
   }
-  for (const s of all.slice(0, n)) ol.appendChild(saleLi(s, true));
+  for (const s of rows.slice(0, n)) {
+    const li = saleLi(s, true);
+    if (s.offer) {
+      li.classList.add('offer');
+      li.querySelector('.d').textContent += ' · best offer accepted: real price hidden, not in average';
+      li.querySelector('.p').title = 'Listed price. The accepted offer was lower and eBay doesn’t show it. Tick “Count eBay best-offer list prices” to include these, or check 130point.';
+      li.querySelector('.p').onclick = null;
+    }
+    ol.appendChild(li);
+  }
   const more = $('#moreSales');
-  more.hidden = all.length <= 6;
-  more.textContent = showAllSales ? 'Show fewer' : `Show ${Math.min(all.length, 60) - 6} more`;
+  more.hidden = rows.length <= SHOW;
+  more.textContent = showAllSales ? 'Show fewer' : `Show ${Math.min(rows.length, 80) - SHOW} more`;
 }
 $('#moreSales').onclick = () => { showAllSales = !showAllSales; renderRecent(state.all, false); };
+
+// ================================================================ card details & population
+let popGrader = null;
+const GRADE_ORDER = (g) => (g === 'BL' ? 10.6 : parseFloat(g));
+const gradeName = (grader, g) => g === 'BL' ? (grader === 'BGS' ? 'Black Label' : grader === 'CGC' ? 'Pristine 10' : 'BL') : `${grader} ${g}`;
+
+// Best available population per grader: PSA's own API > the most complete other source.
+function populations() {
+  const cands = [];
+  if (state.cert && state.cert.specPop) cands.push({ ...state.cert.specPop, rank: 3 });
+  for (const id of ['pricecharting', 'alt', 'cardladder', 'collectr']) {
+    const r = state.src[id];
+    if (r && r.pop) cands.push({ ...r.pop, rank: 1 });
+  }
+  const out = {};
+  for (const c of cands) {
+    for (const [grader, counts] of Object.entries(c.graders || {})) {
+      // A source's own total (PSA's includes "Authentic" slabs) beats summing the grades.
+      const total = (c.total && Object.keys(c.graders).length === 1 ? c.total : 0) || Object.values(counts).reduce((a, b) => a + b, 0);
+      const cur = out[grader];
+      if (!cur || c.rank > cur.rank || (c.rank === cur.rank && total > cur.total)) out[grader] = { counts, total, source: c.source, note: c.note, rank: c.rank };
+    }
+  }
+  return out;
+}
+
+function renderCardInfo() {
+  const pc = state.src.pricecharting;
+  const info = (pc && pc.info) || {};
+  const img = $('#cardImg');
+  const slab = state.cert && state.cert.images && state.cert.images[0];
+  const imgUrl = (slab && slab.url) || info.image;
+  if (imgUrl) { img.src = imgUrl; img.hidden = false; img.title = slab ? 'Your slab (PSA photo)' : ''; } else img.hidden = true;
+  const pops = populations();
+  const graders = Object.keys(pops);
+  const facts = [];
+  if (info.title) facts.push(`<span><b>${esc(info.title)}</b></span>`);
+  if (info.cardNumber) facts.push(`<span>No. <b>${esc(info.cardNumber.replace(/^#/, ''))}</b></span>`);
+  if (info.releaseDate) facts.push(`<span>Released <b>${esc(info.releaseDate)}</b></span>`);
+  if (info.publisher) facts.push(`<span>${esc(info.publisher)}</span>`);
+  if (state.cert && state.cert.subject) {
+    facts.push(`<span>Slab: <b>${esc(state.cert.grader)} #${esc(state.cert.cert)}</b> · ${esc([state.cert.year, state.cert.brand, state.cert.gradeText].filter(Boolean).join(' · '))}` +
+      `${state.cert.pop != null ? ` · pop <b>${Number(state.cert.pop).toLocaleString()}</b>` : ''}${state.cert.popHigher != null ? ` · <b>${Number(state.cert.popHigher).toLocaleString()}</b> higher` : ''}` +
+      `${(state.cert.images || []).length ? ' · photos: ' + state.cert.images.map((im, i) => `<a href="${esc(im.url)}" target="_blank" rel="noopener">${im.front ? 'front' : i === 1 ? 'back' : 'photo ' + (i + 1)}</a>`).join(' · ') : ''}</span>`);
+  }
+  const block = $('#popBlock');
+  block.hidden = !graders.length && !facts.length;
+  if (block.hidden) return;
+  $('#cardFacts').innerHTML = facts.join('');
+
+  // grader tabs
+  const want = state.parts.grader;
+  if (!popGrader || !pops[popGrader]) popGrader = pops[want] ? want : graders[0];
+  const seg = $('#popSeg');
+  seg.innerHTML = graders.map(g => `<button data-g="${g}" class="${g === popGrader ? 'on' : ''}">${g}</button>`).join('');
+  seg.querySelectorAll('button').forEach(b => (b.onclick = () => { popGrader = b.dataset.g; renderCardInfo(); }));
+  if (!popGrader) { $('#popStats').innerHTML = ''; $('#popBars').innerHTML = '<span class="muted small">No population data found for this card.</span>'; $('#popSource').textContent = ''; return; }
+
+  const p = pops[popGrader];
+  const grades = Object.keys(p.counts).sort((a, b) => GRADE_ORDER(b) - GRADE_ORDER(a));
+  const target = popGrader === want ? (state.parts.qual ? 'BL' : state.parts.grade) : null;
+  const atGrade = target != null ? p.counts[target] : null;
+  const higher = target != null ? grades.filter(g => GRADE_ORDER(g) > GRADE_ORDER(target)).reduce((a, g) => a + p.counts[g], 0) : null;
+  const gems = (p.counts['10'] || 0) + (p.counts.BL || 0);
+  const ks = (label, val, sub) => `<div class="ks"><span>${label}</span><b>${val}</b><small>${sub || '&nbsp;'}</small></div>`;
+  $('#popStats').innerHTML =
+    ks(target ? `Pop · ${esc(gradeName(popGrader, target))}` : 'Pop', atGrade != null ? atGrade.toLocaleString() : '—', atGrade != null && p.total ? `${(atGrade / p.total * 100).toFixed(1)}% of graded` : '') +
+    ks('Graded higher', higher != null ? higher.toLocaleString() : '—', higher === 0 ? 'top grade' : '') +
+    ks(`Total ${popGrader}`, p.total.toLocaleString(), p.note || '') +
+    ks('Gem rate', p.total ? `${(gems / p.total * 100).toFixed(1)}%` : '—', `${popGrader} 10${popGrader !== 'PSA' && p.counts.BL ? ' + BL/Pristine' : ''}`);
+  const max = Math.max(...grades.map(g => p.counts[g]), 1);
+  $('#popBars').innerHTML = grades.map(g => `<div class="popbar${g === target ? ' cur' : ''}" data-g="${g}" title="Price ${esc(gradeName(popGrader, g))}">
+      <span class="g">${esc(gradeName(popGrader, g))}</span><span class="track"><span class="fill" style="width:${(p.counts[g] / max * 100).toFixed(1)}%"></span></span>
+      <span class="n">${p.counts[g].toLocaleString()}</span></div>`).join('');
+  $('#popBars').querySelectorAll('.popbar').forEach(el => (el.onclick = () => {
+    const g = el.dataset.g;
+    switchGrade(g === 'BL' ? (popGrader === 'BGS' ? 'BGS Black Label 10' : `${popGrader} Pristine 10`) : `${popGrader} ${g}`);
+  }));
+  $('#popSource').textContent = `Population from ${p.source}${p.note ? ` (${p.note})` : ''}.`;
+}
+
+// ================================================================ current listings (lowest asks)
+let showAllAsks = false;
+async function runAsks() {
+  const sid = state.sid;
+  state.asks = { status: 'loading', list: [] };
+  renderAsks();
+  try {
+    const res = await P.ebayAsks(state.parts, settings.platforms.ebay, secrets);
+    if (sid !== state.sid) return;
+    state.asks = { status: 'ok', raw: res.asks, via: res.via, url: res.url };
+  } catch (e) {
+    if (sid !== state.sid) return;
+    state.asks = { status: 'error', error: e.message, raw: [] };
+  }
+  renderAsks();
+}
+
+// Same exact-card / exact-grade rules as sales; prices in CAD with shipping.
+function matchedAsks() {
+  const a = state.asks || {};
+  return (a.raw || []).map(x => {
+    if (P.JUNK_RE.test(x.title) || !GCP.titleMatchesGrade(x.title, state.parts.grader, state.parts.grade, state.parts.qual)) return null;
+    if (!GCP.matchCard(x.title, state.partsM || state.parts).ok) return null;
+    const c = P.toCAD(x.price, x.cur, fx);
+    if (!c) return null;
+    const ship = x.ship != null ? (P.toCAD(x.ship, x.cur, fx) || { price: 0 }).price : null;
+    return { ...x, price: c.price, converted: c.converted, orig: c.orig, ship, total: c.price + (ship || 0) };
+  }).filter(Boolean).sort((p, q) => p.total - q.total);
+}
+
+function renderAsks() {
+  const box = $('#asksBlock');
+  const a = state.asks || {};
+  box.hidden = false;
+  const ol = $('#asks');
+  ol.innerHTML = '';
+  const sum = $('#asksSummary');
+  if (a.status === 'loading') { sum.textContent = 'loading…'; ol.innerHTML = '<li><span class="empty-row">Finding current listings…</span></li>'; return; }
+  if (a.status === 'error') {
+    sum.textContent = '';
+    ol.innerHTML = `<li><span class="empty-row">${esc(/Blocked|403/.test(a.error) ? 'eBay turned away the listings request. Add your eBay keys in Settings for reliable current listings.' : a.error)}</span></li>`;
+    $('#moreAsks').hidden = true;
+    return;
+  }
+  const list = matchedAsks();
+  const recent = (state.all || []).slice(0, 10);
+  const avg = recent.length ? recent.reduce((t, x) => t + x.price, 0) / recent.length : null;
+  if (!list.length) { sum.textContent = a.via ? `via ${a.via}` : ''; ol.innerHTML = '<li><span class="empty-row">No matching Buy It Now listings right now.</span></li>'; $('#moreAsks').hidden = true; return; }
+  const low = list[0];
+  const vs = avg ? (low.total - avg) / avg * 100 : null;
+  sum.innerHTML = `lowest <b>${money(low.total)}</b>${vs != null ? ` <span class="delta ${vs <= 0 ? 'up' : 'down'}">${vs <= 0 ? '▼' : '▲'}${Math.abs(vs).toFixed(1)}% vs last 10 sales</span>` : ''} · ${list.length} listed`;
+  for (const x of list.slice(0, showAllAsks ? 30 : 5)) {
+    const li = document.createElement('li');
+    li.innerHTML = `${x.img ? `<img src="${esc(x.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="noimg" style="background:#3b82f6">eB</span>'}
+      <div style="min-width:0"><a class="t" href="${esc(x.url)}" target="_blank" rel="noopener" title="${esc(x.title)}">${esc(x.title)}</a>
+      <div class="d">${x.ship == null ? 'shipping not shown' : x.ship ? `${money(x.price)} + ${money(x.ship)} shipping` : 'free shipping'}${x.buyingOptions.includes('BEST_OFFER') ? ' · accepts offers' : ''}${x.converted ? ` · ≈ from ${x.orig.cur} ${x.orig.amount.toLocaleString('en-CA')}` : ''}</div></div>
+      <span class="p">${x.converted ? '≈' : ''}${money(x.total)}</span>`;
+    ol.appendChild(li);
+  }
+  const more = $('#moreAsks');
+  more.hidden = list.length <= 5;
+  more.textContent = showAllAsks ? 'Show fewer' : `Show ${Math.min(list.length, 30) - 5} more`;
+}
+$('#moreAsks').onclick = () => { showAllAsks = !showAllAsks; renderAsks(); };
 
 // ================================================================ deal check
 function askValue() { return parseFloat(String($('#ask').value).replace(/[$,\s]/g, '').replace(/k$/i, '000')) || null; }
@@ -706,7 +914,7 @@ function drawChart() {
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   const now = new Date();
   let sales = (state.all || []).filter(s => GCP.inWindow(s, rangeDays, now));
-  if ($('#trim').checked) sales = GCP.trimOutliers(sales);
+
   if (!sales.length) {
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">${loadingSources() ? 'Loading…' : `No matching sales in the last ${rangeDays} days`}</text>`;
     $('#legend').innerHTML = '';
@@ -815,7 +1023,7 @@ function renderGradesTable() {
   tbody.innerHTML = '';
   for (const g of labels) {
     const list = (byGrade[g] || []).sort((a, b) => b.date - a.date);
-    const st = GCP.stats(GCP.trimOutliers(list).map(s => s.price));
+    const st = GCP.stats(list.map(s => s.price));
     const tr = document.createElement('tr');
     if (g === cur) tr.className = 'cur';
     tr.innerHTML = `<td>${esc(g)}</td><td>${st ? money(st.avg) : '—'}</td><td>${list.length || '—'}</td><td>${list[0] ? money(list[0].price) : '—'}</td><td>${cp[g] ? money(cp[g], true) : '—'}</td>`;
@@ -933,13 +1141,6 @@ $('#searchForm').addEventListener('submit', (e) => {
 $('#refreshBtn').onclick = () => state.cert && !state.parts ? lookupCert(state.cert) : search(state.query, { force: true, askPrice: askValue(), cert: state.cert });
 $('#scanBtn').onclick = () => scanTab();
 $('#tabPromptScan').onclick = () => scanTab();
-$('#trim').addEventListener('change', aggregate);
-$('#bestOffers').addEventListener('change', () => { settings.excludeBestOffers = !$('#bestOffers').checked; reclassify(); });
-$('#converted').addEventListener('change', () => {
-  settings.includeConverted = $('#converted').checked;
-  chrome.storage.sync.set({ includeConverted: settings.includeConverted });
-  reclassify();
-});
 $('#ask').addEventListener('input', () => { renderDeal(); drawChart(); });
 chrome.storage.onChanged.addListener((changes, area) => { if (area === 'sync' || (area === 'local' && P.SECRET_KEYS.some(k => k in changes))) loadSettings(); });
 

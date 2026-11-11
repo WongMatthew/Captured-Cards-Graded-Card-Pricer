@@ -48,6 +48,7 @@
 
     <section class="summary" id="summary" hidden>
       <div class="summary-head">
+        <img id="cardImg" class="card-img" alt="" hidden referrerpolicy="no-referrer">
         <div class="summary-id">
           <div class="eyebrow">Sold price · CAD</div>
           <div id="summaryTitle" class="summary-title"></div>
@@ -71,10 +72,7 @@
 
       <div class="block">
         <div class="block-head">
-          <span>Price trend</span>
-          <div class="seg" id="rangeSeg">
-            <button data-days="7">7D</button><button data-days="30" class="on">30D</button><button data-days="90">90D</button><button data-days="365">1Y</button>
-          </div>
+          <span>Price trend</span><span class="muted small">last 90 days</span>
         </div>
         <div class="chart-box">
           <svg id="chart" role="img" aria-label="Price trend"></svg>
@@ -89,10 +87,18 @@
         <button id="moreSales" class="linkish" type="button" hidden></button>
       </div>
 
-      <div class="toggles">
-        <label class="toggle"><input type="checkbox" id="trim" checked> Trim outliers</label>
-        <label class="toggle"><input type="checkbox" id="bestOffers"> Count eBay best-offer list prices</label>
-        <label class="toggle" title="PriceCharting, 130point and Alt only show US$; converted at the Bank of Canada daily rate"><input type="checkbox" id="converted" checked> Include US$ sources (converted)</label>
+      <div class="block" id="asksBlock" hidden>
+        <div class="block-head"><span>Current listings · eBay.ca</span><span id="asksSummary" class="muted small"></span></div>
+        <ol id="asks" class="sales"></ol>
+        <button id="moreAsks" class="linkish" type="button" hidden></button>
+      </div>
+
+      <div class="block" id="popBlock" hidden>
+        <div class="block-head"><span>Card &amp; population</span><div class="seg" id="popSeg"></div></div>
+        <div id="cardFacts" class="facts"></div>
+        <div id="popStats" class="popstats"></div>
+        <div id="popBars" class="popbars"></div>
+        <div id="popSource" class="muted small"></div>
       </div>
       <div class="foot muted" id="summaryFoot"></div>
 

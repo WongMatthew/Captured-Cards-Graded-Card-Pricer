@@ -1,7 +1,7 @@
 /* global GCPPlatforms */
 const P = GCPPlatforms;
 const $ = (s) => document.querySelector(s);
-const BOOLS = ['autoScan', 'trimOutliers', 'pokemonOnly', 'excludeBestOffers', 'autoCollectr', 'includeConverted'];
+const BOOLS = ['autoScan', 'pokemonOnly', 'autoCollectr'];
 
 async function load() {
   const s = await chrome.storage.sync.get(null);
@@ -54,9 +54,19 @@ load();
 $('#testEbay').onclick = async () => {
   const out = $('#ebayResult');
   out.textContent = ' Testing…';
-  await chrome.storage.session.remove('ebayToken');
+  await chrome.storage.session.remove(['ebayToken', 'ebayTokenBasic']);
+  await chrome.storage.local.remove('ebayInsightsDenied');
+  const keys = { ebayAppId: $('#ebayAppId').value, ebayCertId: $('#ebayCertId').value };
+  const parts = GCP.splitQuery('Charizard Base Set 4/102 PSA 9');
+  let listings = '';
   try {
-    const sales = await P.ebayViaApi(GCP.splitQuery('Charizard Base Set 4/102 PSA 9'), { ebayAppId: $('#ebayAppId').value, ebayCertId: $('#ebayCertId').value });
-    out.textContent = ` Works: ${sales.length} sold listings returned.`;
-  } catch (e) { out.textContent = ' ' + e.message; }
+    const r = await P.ebayAsks(parts, { url: '' }, keys);
+    listings = `Current listings ✓ (${r.asks.length} found)`;
+  } catch (e) { out.textContent = ' ' + e.message; return; }
+  try {
+    const sales = await P.ebayViaApi(parts, keys);
+    out.textContent = ` ${listings} · Sold items ✓ (${sales.length})`;
+  } catch (e) {
+    out.textContent = ` ${listings} · Sold items: not available (eBay has closed Marketplace Insights). Sold prices come from eBay.ca, Terapeak and 130point instead.`;
+  }
 };

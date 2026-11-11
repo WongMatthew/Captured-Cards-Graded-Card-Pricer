@@ -21,6 +21,7 @@
       alt: { enabled: true, url: 'https://alt.xyz/browse?query={q}&category=POKEMON_CARDS' },
       collectr: { enabled: true, url: 'https://app.getcollectr.com/?query={q}' },
       cardladder: { enabled: true, url: 'https://app.cardladder.com/sales-history?q={q}' },
+      ppt: { enabled: true, url: 'https://www.pokemonpricetracker.com' },
       terapeak: { enabled: true, url: 'https://www.ebay.ca/sh/research?marketplace=EBAY-CA&keywords={q}&dayRange=365&tabName=SOLD&limit=50&offset=0' },
       snkrdunk: { enabled: true, url: 'https://snkrdunk.com/search?keywords={q}' }
     }
@@ -32,7 +33,7 @@
     return cfg;
   }
   // Secrets live in chrome.storage.local (this computer only), not in synced settings.
-  const SECRET_KEYS = ['psaApiKey', 'ebayAppId', 'ebayCertId'];
+  const SECRET_KEYS = ['psaApiKey', 'ebayAppId', 'ebayCertId', 'pptApiKey'];
 
   const META = {
     ebay: { name: 'eBay.ca', short: 'eB', color: '#3b82f6', mode: 'fetch', cur: 'CAD', note: 'Sold & completed listings, in CAD' },
@@ -41,6 +42,7 @@
     alt: { name: 'Alt', short: 'Alt', color: '#a855f7', mode: 'embed', cur: 'USD', note: 'Sold history (sign in to Alt)' },
     collectr: { name: 'Collectr', short: 'Co', color: '#ec4899', mode: 'embed', cur: 'USD', note: 'Market price per grade (set Collectr to CAD)' },
     snkrdunk: { name: 'SNKRDUNK', short: 'SD', color: '#111827', mode: 'embed', cur: 'JPY', note: 'Japan marketplace sales history (¥ → CAD)' },
+    ppt: { name: 'Pokemon Price Tracker', short: 'PPT', color: '#f97316', mode: 'fetch', cur: 'USD', note: 'eBay graded-sales database (API key)' },
     terapeak: { name: 'Terapeak', short: 'TP', color: '#0064d2', mode: 'embed', cur: 'CAD', note: 'eBay’s own sold data, incl. accepted best offers (sign in to eBay)' },
     cardladder: { name: 'Card Ladder', short: 'CL', color: '#0ea5e9', mode: 'embed', cur: 'USD', note: 'Sales history (sign in to Card Ladder)' }
   };
@@ -279,6 +281,87 @@
       ctx.progress && ctx.progress(`Reading page ${page + 1}…`);
     }
     return { url, sales, note: apiError ? `eBay API: ${apiError}. Used the website instead.` : '' };
+  }
+
+  // ---------------------------------------------------------------- Pokemon Price Tracker API
+  // https://www.pokemonpricetracker.com/docs — eBay graded sales per card: per-grade summary on every paid plan,
+  // individual sold listings (ebay.soldListings) on the Business plan.
+  const PPT_BASE = 'https://www.pokemonpricetracker.com/api/v2';
+  async function pptGet(path, key) {
+    const res = await fetch(PPT_BASE + path, { credentials: 'omit', headers: { Authorization: 'Bearer ' + String(key).trim(), Accept: 'application/json' } });
+    if (res.status === 401 || res.status === 403) throw new Error('Pokemon Price Tracker rejected the API key (Settings)');
+    if (res.status === 429) throw new Error('Pokemon Price Tracker daily credit limit reached');
+    if (!res.ok) throw new Error('Pokemon Price Tracker HTTP ' + res.status);
+    return { json: await res.json(), remaining: res.headers.get('X-RateLimit-Daily-Remaining') };
+  }
+  // psa10, psa9, bgs9_5, cgc9_5 …
+  const pptGradeKey = (parts) => parts.grader ? parts.grader.toLowerCase() + String(parts.grade).replace('.', '_') : '';
+
+  function pptScore(c, parts) {
+    let s = 0;
+    const num = String(c.cardNumber || '').replace(/^0+/, '').split('/')[0];
+    if (parts.numberKey) { if (num === parts.numberKey) s += 10; else return -1; }
+    if (parts.totalKey && String(c.totalSetNumber || '').replace(/^0+/, '') === parts.totalKey) s += 3;
+    const hay = `${c.name} ${c.setName} ${(c.printingsAvailable || []).join(' ')}`.toLowerCase();
+    for (const w of parts.name.toLowerCase().split(/\s+/)) if (w.length > 2 && hay.includes(w)) s += 1;
+    if (parts.keyWord && !String(c.name).toLowerCase().includes(parts.keyWord.toLowerCase())) s -= 6;
+    return s;
+  }
+
+  async function pptFind(parts, key) {
+    const wantJp = (parts.variants || []).includes('Japanese');
+    const q = [searchCore(parts), parts.number || parts.numberKey].filter(Boolean).join(' ');
+    let best = null;
+    for (const lang of wantJp ? ['japanese', 'english'] : ['english', 'japanese']) {
+      const { json } = await pptGet(`/cards?search=${encodeURIComponent(q)}&language=${lang}&limit=8`, key);
+      for (const c of json.data || []) {
+        const sc = pptScore(c, parts);
+        if (sc > 0 && (!best || sc > best.sc)) best = { c, sc, lang };
+      }
+      if (best && best.sc >= 10) break;
+    }
+    return best;
+  }
+
+  async function pricetracker(query, cfg, parts, ctx = {}) {
+    const key = ctx.secrets && ctx.secrets.pptApiKey;
+    if (!key) throw Object.assign(new Error('Add your Pokemon Price Tracker API key in Settings'), { needsKey: true });
+    const hit = await pptFind(parts, key);
+    if (!hit) return { url: cfg.url, sales: [], note: 'This card isn’t in Pokemon Price Tracker’s database.' };
+    const { json, remaining } = await pptGet(`/cards/${encodeURIComponent(hit.c.tcgPlayerId || hit.c.id)}?includeEbay=true&language=${hit.lang}`, key);
+    const card = Array.isArray(json.data) ? json.data[0] : json.data;
+    const eb = (card && card.ebay) || {};
+    // 1st Edition (or another printing) has its own sales pool when it isn't the card's main printing.
+    let pool = eb, printing = (card.prices && card.prices.primaryPrinting) || '';
+    const want1st = (parts.variants || []).includes('1st Edition');
+    if (want1st !== /1st/i.test(printing) && eb.salesByPrinting) {
+      const k = Object.keys(eb.salesByPrinting).find(n => /1st/i.test(n) === want1st);
+      if (k) { pool = eb.salesByPrinting[k]; printing = k; }
+    }
+    const gk = pptGradeKey(parts);
+    let grade = (pool.salesByGrade || {})[gk] || null;
+    if (grade && parts.qual === 'BL') grade = (grade.labels || {}).blackLabel || null;
+    if (grade && parts.qual === 'PRISTINE') grade = (grade.labels || {}).pristine || null;
+    const listings = ((pool.soldListings || {})[gk] || []).filter(l =>
+      parts.qual === 'BL' ? /black/i.test(l.gradeLabel || l.title) : parts.qual === 'PRISTINE' ? /pristine/i.test(l.gradeLabel || l.title) : true);
+    const sales = listings.map(l => ({
+      price: +l.price, cur: l.currency || 'USD', date: new Date(l.soldDate), exact: true, title: l.title || '', url: l.url || '',
+      itemId: /^\d{9,}$/.test(String(l.listingId || '')) ? String(l.listingId) : null,
+      bestOffer: !!l.bestOfferAccepted, auction: l.listingType === 'auction', via: l.source && !/ebay/i.test(l.source) ? l.source : undefined
+    })).filter(x => x.price && !isNaN(x.date));
+    return {
+      url: card.tcgPlayerUrl || cfg.url,
+      product: `${card.name} · ${card.setName}${card.cardNumber ? ' #' + card.cardNumber : ''}${printing ? ' · ' + printing : ''}`,
+      sales,
+      summary: grade ? {
+        count: grade.count, median: grade.medianPrice, average: grade.averagePrice, min: grade.minPrice, max: grade.maxPrice,
+        market7: grade.marketPrice7Day, trend: grade.marketTrend, lastSale: grade.lastSaleDate,
+        smart: grade.smartMarketPrice && grade.smartMarketPrice.price, confidence: grade.smartMarketPrice && grade.smartMarketPrice.confidence, cur: 'USD'
+      } : null,
+      individual: !!pool.soldListings,
+      image: card.imageCdnUrl400 || card.imageUrl || '',
+      remaining
+    };
   }
 
   // ---------------------------------------------------------------- current listings (lowest asks)
@@ -671,7 +754,7 @@
     return null;
   }
 
-  const FETCHERS = { ebay, pricecharting, '130point': point130 };
+  const FETCHERS = { ppt: pricetracker, ebay, pricecharting, '130point': point130 };
 
   // Pages for "Open ↗" and the mini views.
   function pageUrl(id, query, cfg, parts, settings) {
@@ -690,5 +773,5 @@
     return cfg.url;
   }
 
-  root.GCPPlatforms = { ebayAsks, parseEbayActive, ebayBasicToken, snkrdunkFind, snkrdunkScore, searchCore, numberForms, certViaWeb, parseCertHtml, psaCertImages, parsePriceChartingInfo, migrateSettings, LOGIN_SOURCES, pageCurrency, SECRET_KEYS, getRates, toCAD, ebayViaApi, CERT_PAGES, certToQuery, psaCertViaApi, DEFAULTS, META, FETCHERS, JUNK_RE, fill, pageUrl, ebayQuery, parseEbay, parsePriceCharting, parse130, pickPriceChartingProduct };
+  root.GCPPlatforms = { pricetracker, pptFind, pptGet, pptGradeKey, ebayAsks, parseEbayActive, ebayBasicToken, snkrdunkFind, snkrdunkScore, searchCore, numberForms, certViaWeb, parseCertHtml, psaCertImages, parsePriceChartingInfo, migrateSettings, LOGIN_SOURCES, pageCurrency, SECRET_KEYS, getRates, toCAD, ebayViaApi, CERT_PAGES, certToQuery, psaCertViaApi, DEFAULTS, META, FETCHERS, JUNK_RE, fill, pageUrl, ebayQuery, parseEbay, parsePriceCharting, parse130, pickPriceChartingProduct };
 })(globalThis);

@@ -70,3 +70,17 @@ $('#testEbay').onclick = async () => {
     out.textContent = ` ${listings} · Sold items: not available (eBay has closed Marketplace Insights). Sold prices come from eBay.ca, Terapeak and 130point instead.`;
   }
 };
+
+$('#testPpt').onclick = async () => {
+  const out = $('#pptResult');
+  out.textContent = ' Testing…';
+  try {
+    const { json, remaining } = await P.pptGet('/cards?search=' + encodeURIComponent('charizard base set') + '&limit=1&includeEbay=true', $('#pptApiKey').value);
+    const c = (json.data || [])[0];
+    const eb = (c && c.ebay) || {};
+    const individual = eb.soldListings && Object.values(eb.soldListings).some(a => a && a.length);
+    const restricted = json.metadata && json.metadata.planRestrictions && json.metadata.planRestrictions.message;
+    out.textContent = ` Works ✓ · ${individual ? 'individual sold listings ✓' : 'per-grade summary (individual sales need the Business plan)'}` +
+      (remaining != null ? ` · ${remaining} credits left today` : '') + (restricted ? ` · ${restricted}` : '');
+  } catch (e) { out.textContent = ' ' + e.message; }
+};

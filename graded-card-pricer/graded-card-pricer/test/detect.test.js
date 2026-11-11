@@ -177,3 +177,18 @@ console.log('v3.2 tests passed');
   assert.strictEqual(GCPPlatforms.ebayQuery(G.splitQuery('Umbreon VMAX Evolving Skies 215/203 PSA 10')).split(' -')[0], 'Umbreon VMAX (215,215/203) PSA 10');
   console.log('v4 tests passed');
 }
+
+// --- v4.2: PSA slab-label text (FA/ prefix, bare cert number), Trainer Gallery numbers
+{
+  const t = '2022 pokemon swsh #tg15 FA/Sylveon Vmax PSA 10 brilliant stars 105232318';
+  const c = G.detectCards(t);
+  assert.strictEqual(c[0].query, 'Sylveon Vmax TG15 PSA 10');
+  assert.deepStrictEqual(G.detectCerts(t).map(x => x.grader + ':' + x.cert), ['PSA:105232318']);
+  assert.deepStrictEqual(G.detectCerts('Order #1234567890 total $40'), []);
+  const p = G.splitQuery('Sylveon VMAX Brilliant Stars TG15 PSA 10');
+  assert(G.matchCard('2022 Pokemon Brilliant Stars Sylveon VMAX TG15/TG30 PSA 10', p).ok);
+  assert(!G.matchCard('Sylveon V TG14/TG30 Brilliant Stars PSA 10', p).ok);
+  assert(!G.matchCard('Sylveon VMAX 075/203 Evolving Skies PSA 10', p).ok);
+  assert.strictEqual(GCPPlatforms.ebayQuery(p).split(' -')[0], 'Sylveon VMAX TG15 PSA 10');
+  console.log('v4.2 tests passed');
+}

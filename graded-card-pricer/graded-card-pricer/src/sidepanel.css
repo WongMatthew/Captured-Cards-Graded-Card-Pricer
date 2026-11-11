@@ -213,3 +213,6 @@ main { padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap:
 #asksBlock .block-head { flex-wrap: wrap; }
 #asksSummary { width: 100%; font-weight: 400; margin-top: 2px; }
 #asksSummary b { color: var(--text); }
+
+.refs { margin-top: 6px; padding: 6px 8px; background: var(--chip); border-radius: 8px; color: var(--muted); line-height: 1.5; }
+.refs b { color: var(--text); font-weight: 600; }

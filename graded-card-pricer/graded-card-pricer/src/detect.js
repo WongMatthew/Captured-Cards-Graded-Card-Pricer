@@ -112,6 +112,7 @@
       .replace(/\b(?:19[89]\d|20[0-3]\d)\b/g, ' ')        // years
       .replace(/\b\d{5,}\b/g, ' ')                        // cert / order numbers
       .replace(/\b(?:black\s*label|pristine|gem\s*mint|gem\s*mt)\b/gi, ' ')
+      .replace(/\b(?:FA|SR|AR|SAR|SIR|IR|CHR|RR|UR|HR|AA|SA|TG)\s*\/\s*(?=[A-Za-z])/gi, ' ')   // PSA label prefixes: FA/SYLVEON VMAX
       .replace(/[^\p{L}\p{N}\s'\-./&]/gu, ' ')
       .split(/\s+/)
       .filter(Boolean);
@@ -401,6 +402,14 @@
 
   function detectCerts(text) {
     const out = new Map();
+    // Slab label text ("… FA/Sylveon VMAX PSA 10 Brilliant Stars 105232318"): a lone 8–10 digit number next to a grade.
+    for (const line of String(text || '').split(/\n+/)) {
+      const g = findGrades(line)[0];
+      if (!g) continue;
+      for (const m of line.matchAll(/(?:^|[^\d$.,#])(\d{8,10})(?![\d,.])/g)) {
+        if (!out.has(m[1])) out.set(m[1], { grader: g.grader, cert: m[1], guessed: false, fromLabel: true });
+      }
+    }
     for (const m of String(text || '').matchAll(CERT_RE)) {
       const ctx = String(text).slice(Math.max(0, m.index - 25), m.index + m[0].length + 10);
       const grader = m[1] ? normGrader(m[1]) : guessGrader(m[2], ctx);

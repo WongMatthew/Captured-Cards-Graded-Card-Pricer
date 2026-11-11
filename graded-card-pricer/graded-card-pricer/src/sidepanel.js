@@ -12,7 +12,7 @@ const CACHE_VER = 'v4';
 const CACHE_MS = 15 * 60 * 1000;
 const EMBED_WAIT_MS = 45000;
 const MOBILE_W = 390;
-const ORDER = ['ebay', '130point', 'terapeak', 'pricecharting', 'snkrdunk', 'cardladder', 'alt', 'collectr'];
+const ORDER = ['ebay', 'ppt', '130point', 'terapeak', 'pricecharting', 'snkrdunk', 'cardladder', 'alt', 'collectr'];
 const COMMON_GRADES = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS Black Label 10', 'BGS 10', 'BGS 9.5', 'BGS 9', 'CGC Pristine 10', 'CGC 10', 'CGC 9.5', 'CGC 9', 'SGC 10', 'TAG 10'];
 const GRADE_BAR = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS 10', 'BGS 9.5', 'BGS 9', 'CGC Pristine 10', 'CGC 10', 'CGC 9.5', 'SGC 10', 'TAG 10'];
 
@@ -248,9 +248,11 @@ async function runFetch(id, cfg, force) {
     }
     if (sid !== state.sid) return;
     Object.assign(r, { status: 'ok', url: data.url || r.url, product: data.product, raw: data.sales, cachedAt: data.cachedAt, note: data.note || '', via: data.via,
-      pop: data.pop || null, info: data.info || null });
+      pop: data.pop || null, info: data.info || null, summary: data.summary || null, individual: data.individual, image: data.image || '',
+      remaining: data.remaining });
   } catch (e) {
     if (sid !== state.sid) return;
+    if (e.needsKey) { Object.assign(r, { status: 'idle', needsKey: true, note: e.message }); renderSource(id); aggregate(); return; }
     Object.assign(r, { status: 'error', blocked: !!e.blocked, error: e.name === 'AbortError' ? 'Timed out' : (e.message || String(e)) });
   }
   reclassify();
@@ -409,10 +411,12 @@ function renderSource(id) {
   else if (r.status === 'error') { st.classList.add('err'); label = r.blocked ? 'Blocked' : 'Error'; }
   else if (counted.length) { st.classList.add('ok'); label = `${counted.length} sale${counted.length > 1 ? 's' : ''}`; }
   else if (r.marketPrice != null) { st.classList.add('ok'); label = 'Market price'; }
+  else if (id === 'ppt' && r.summary) { st.classList.add('ok'); label = 'Summary'; }
   else { st.classList.add('warn'); label = r.raw.length ? 'No matches' : 'Nothing found'; }
   st.textContent = label;
   st.title = label;
-  node.querySelector('.src-val').textContent = wk['7d'] ? money(wk['7d'].avg) : r.marketPrice != null ? money(r.marketPrice) : '';
+  const pptRef = id === 'ppt' && r.summary ? pptCad(r.summary) : null;
+  node.querySelector('.src-val').textContent = wk['7d'] ? money(wk['7d'].avg) : r.marketPrice != null ? money(r.marketPrice) : pptRef && pptRef.value ? money(pptRef.value) : '';
   if (r.via) node.querySelector('.src-name small').textContent = 'via ' + r.via;
   node.querySelector('.src-val').title = wk['7d'] ? '7-day average' : r.marketPrice != null ? 'Market price for this grade' : '';
 
@@ -426,6 +430,12 @@ function renderSource(id) {
         : `${r.error}. Try Open ↗.`;
   } else if (r.status === 'ok' && !counted.length && r.rejected.length) {
     noteText = `${r.rejected.length} listings found, none match this exact card and grade. Check “filtered out” below.`;
+  } else if (id === 'ppt' && r.status === 'ok') {
+    noteText = pptRef ? pptRef.text : 'No eBay sales for this grade in Pokemon Price Tracker.';
+    if (!r.individual) noteText += '. Individual sales need PPT’s Business plan; this is its per-grade summary';
+    if (r.remaining != null) noteText += ` · ${r.remaining} credits left today`;
+  } else if (id === 'ppt' && r.needsKey) {
+    noteText = 'Add your Pokemon Price Tracker API key in Settings to include its eBay graded-sales data.';
   } else if (r.status === 'idle' && id === 'snkrdunk') {
     noteText = 'SNKRDUNK loads automatically with each search.';
   } else if (r.status === 'idle') {
@@ -690,6 +700,7 @@ function aggregate() {
   ].filter(Boolean).join(' · ');
 
   renderRecent(all, busy);
+  renderRefs();
   if (state.asks && state.asks.status === 'ok') renderAsks();
   renderCardInfo();
   renderDeal();
@@ -740,6 +751,8 @@ function renderRecent(all, busy) {
 $('#moreSales').onclick = () => { showAllSales = !showAllSales; renderRecent(state.all, false); };
 
 // ================================================================ card details & population
+// "5,214" / 5214 → "5,214" (PSA pages write counts with commas)
+const num = (v) => { const n = Number(String(v).replace(/[,\s]/g, '')); return isNaN(n) ? esc(v) : n.toLocaleString(); };
 let popGrader = null;
 const GRADE_ORDER = (g) => (g === 'BL' ? 10.6 : parseFloat(g));
 const gradeName = (grader, g) => g === 'BL' ? (grader === 'BGS' ? 'Black Label' : grader === 'CGC' ? 'Pristine 10' : 'BL') : `${grader} ${g}`;
@@ -769,7 +782,7 @@ function renderCardInfo() {
   const info = (pc && pc.info) || {};
   const img = $('#cardImg');
   const slab = state.cert && state.cert.images && state.cert.images[0];
-  const imgUrl = (slab && slab.url) || info.image;
+  const imgUrl = (slab && slab.url) || info.image || (state.src.ppt && state.src.ppt.image);
   if (imgUrl) { img.src = imgUrl; img.hidden = false; img.title = slab ? 'Your slab (PSA photo)' : ''; } else img.hidden = true;
   const pops = populations();
   const graders = Object.keys(pops);
@@ -780,7 +793,7 @@ function renderCardInfo() {
   if (info.publisher) facts.push(`<span>${esc(info.publisher)}</span>`);
   if (state.cert && state.cert.subject) {
     facts.push(`<span>Slab: <b>${esc(state.cert.grader)} #${esc(state.cert.cert)}</b> · ${esc([state.cert.year, state.cert.brand, state.cert.gradeText].filter(Boolean).join(' · '))}` +
-      `${state.cert.pop != null ? ` · pop <b>${Number(state.cert.pop).toLocaleString()}</b>` : ''}${state.cert.popHigher != null ? ` · <b>${Number(state.cert.popHigher).toLocaleString()}</b> higher` : ''}` +
+      `${state.cert.pop != null ? ` · pop <b>${num(state.cert.pop)}</b>` : ''}${state.cert.popHigher != null ? ` · <b>${num(state.cert.popHigher)}</b> higher` : ''}` +
       `${(state.cert.images || []).length ? ' · photos: ' + state.cert.images.map((im, i) => `<a href="${esc(im.url)}" target="_blank" rel="noopener">${im.front ? 'front' : i === 1 ? 'back' : 'photo ' + (i + 1)}</a>`).join(' · ') : ''}</span>`);
   }
   const block = $('#popBlock');
@@ -817,6 +830,33 @@ function renderCardInfo() {
     switchGrade(g === 'BL' ? (popGrader === 'BGS' ? 'BGS Black Label 10' : `${popGrader} Pristine 10`) : `${popGrader} ${g}`);
   }));
   $('#popSource').textContent = `Population from ${p.source}${p.note ? ` (${p.note})` : ''}.`;
+}
+
+// ================================================================ Pokemon Price Tracker summary
+// PPT's per-grade summary (US$) → CAD values and a one-line description.
+function pptCad(sm) {
+  const c = (v) => { const x = v == null ? null : P.toCAD(+v, sm.cur || 'USD', fx); return x ? x.price : null; };
+  const value = c(sm.smart) ?? c(sm.median);
+  const bits = [];
+  if (sm.smart != null) bits.push(`smart price ${money(c(sm.smart))}${sm.confidence ? ` (${sm.confidence} confidence)` : ''}`);
+  if (sm.median != null) bits.push(`median ${money(c(sm.median))}`);
+  if (sm.market7 != null) bits.push(`7-day ${money(c(sm.market7))}`);
+  if (sm.count) bits.push(`${sm.count} eBay sales`);
+  if (sm.trend) bits.push(`trend ${sm.trend}`);
+  if (sm.lastSale) bits.push(`last sold ${shortDate(new Date(sm.lastSale))}`);
+  return { value, text: bits.join(' · ') };
+}
+
+function renderRefs() {
+  const el = $('#refs');
+  if (!el) return;
+  const refs = [];
+  const pp = state.src.ppt;
+  if (pp && pp.summary) { const x = pptCad(pp.summary); if (x.value) refs.push(`<b>Pokemon Price Tracker</b> ${esc(x.text)}`); }
+  const co = state.src.collectr;
+  if (co && co.marketPrice != null) refs.push(`<b>Collectr</b> market ${money(co.marketPrice)}`);
+  el.innerHTML = refs.join('<br>');
+  el.hidden = !refs.length;
 }
 
 // ================================================================ current listings (lowest asks)

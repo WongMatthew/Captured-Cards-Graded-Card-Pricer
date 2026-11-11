@@ -1,4 +1,4 @@
-# Graded Card Pricer (Chrome extension) · v4.1
+# Graded Card Pricer (Chrome extension) · v4.2
 
 Reads the email or page you have open, finds graded Pokémon cards ("Umbreon VMAX 215/203 PSA 10",
 "Charizard Base Set 4/102 BGS 9.5", PSA slab text like "#215 UMBREON VMAX GEM MT 10"), and shows recent **sold**
@@ -54,6 +54,7 @@ prices from eBay, PriceCharting, 130point, Alt and Collectr in one side panel.
 |---|---|---|
 | eBay.ca | Sold listings (up to 3 pages) | Nothing |
 | **Terapeak** | eBay's own research tool (Seller Hub → Research): sold listings with actual prices, incl. accepted best offers | Sign in to eBay in its 📱 window once (Terapeak is free in Seller Hub) |
+| **Pokemon Price Tracker** (API key) | eBay graded-sales database. Business plan: every sold listing, which joins your sales. Other paid plans: a per-grade summary (smart price, median, 7-day price, trend) shown as a reference. Uses the 1st Edition pool when you search 1st Edition. | API key in Settings |
 | 130point | eBay + auction-house sales, incl. real best-offer prices | Nothing |
 | PriceCharting | The exact product page (e.g. the 1st Edition version) and its graded sales | Nothing |
 | **SNKRDUNK** | Japan's largest card marketplace: sales history per grade (PSA 10/9, BGS 9.5/10/Black Label), ¥ → CAD | Nothing |

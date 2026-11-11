@@ -160,3 +160,20 @@ console.log('v3.2 tests passed');
   assert.strictEqual(GCPPlatforms.parsePriceChartingInfo(fakeDoc, '<p>no pop</p>').pop, null);
   console.log('v3.3 tests passed');
 }
+
+// --- v4: lenient on what sellers leave out, strict on what they state; set size learned from sales
+{
+  const g = G.splitQuery('Gengar EX Japanese Phantom Gate 1st Edition 90 PSA 10');
+  const titles = ['2014 Pokemon Japanese XY Phantom Gate 1st Edition #090 FA Gengar EX PSA 10', 'PSA10 Gengar EX 090/088 XY4 SR 1st Edition Japanese',
+    'Gengar EX 090/088 SR Full Art 1st ED', 'Pokemon Gengar EX Full Art 090/088 1st Edition', '2014 POKEMON JAPANESE XY #090 FA/GENGAR EX PSA 10'];
+  const gm = { ...g, totalKey: G.dominantTotal(titles, g) };
+  assert.strictEqual(gm.totalKey, '88');
+  for (const t of titles) assert(G.matchCard(t, gm).ok, t);
+  assert(!G.matchCard('Pokemon Gengar EX XY Phantom Gate Japanese UNLIMITED FA #090 PSA 10', gm).ok, 'unlimited is a different version');
+  assert(!G.matchCard('Gengar EX 090/088 PSA 10 English', gm).ok);
+  assert(!G.matchCard('Gengar ex 090/128 30th Celebration PSA 10', gm).ok, 'same number, different set');
+  assert.strictEqual(G.parseDate('2026/11/04', now).getDate(), 4);
+  assert.strictEqual(GCPPlatforms.ebayQuery(g).split(' -')[0], 'Gengar EX (90,090) PSA 10');
+  assert.strictEqual(GCPPlatforms.ebayQuery(G.splitQuery('Umbreon VMAX Evolving Skies 215/203 PSA 10')).split(' -')[0], 'Umbreon VMAX (215,215/203) PSA 10');
+  console.log('v4 tests passed');
+}

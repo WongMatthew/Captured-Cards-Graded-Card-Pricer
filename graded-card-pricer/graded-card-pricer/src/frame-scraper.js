@@ -18,7 +18,8 @@
   } catch (e) { target = null; }
   if (!target) return;
 
-  const platform = location.hostname.includes('getcollectr') ? 'collectr' : location.hostname.includes('cardladder') ? 'cardladder' : 'alt';
+  const platform = location.hostname.includes('getcollectr') ? 'collectr' : location.hostname.includes('cardladder') ? 'cardladder'
+    : location.hostname.includes('snkrdunk') ? 'snkrdunk' : /(^|\.)ebay\./.test(location.hostname) ? 'terapeak' : 'alt';
 
   // Currency the page is showing. If you've set the site to CAD (or picked CAD in its currency menu) prices are CAD.
   function pageCurrency() {
@@ -312,12 +313,117 @@
     });
   }
 
+  // ---------------------------------------------------------------- SNKRDUNK (Japan)
+  // Product titles look like "ゲンガーEX SR :1ED [XY4 090/088](拡張パック「ファントムゲート」)"; ":1ED" = 1st Edition,
+  // "【英語版】" = English version. Sales histories list date / condition / price (¥) per grade.
+  const SD_GRADES = { 'PSA10': 'PSA 10', 'PSA9': 'PSA 9', 'BGS10 BL': 'BGS Black Label 10', 'BGS10 GL': 'BGS 10', 'BGS9.5': 'BGS 9.5' };
+
+  function sdNumber(title) {
+    const m = title.match(/\[(?:[A-Za-z0-9-]+\s+)?0*(\d{1,3})\s*(?:\/|\])/) || title.match(/\b0*(\d{1,3})\s*\/\s*\d{1,3}\b/);
+    return m ? m[1] : '';
+  }
+  function sdScore(title) {
+    let s = 0;
+    const want = (parts.numberKey || '').replace(/^0+/, '');
+    const num = sdNumber(title);
+    if (want) { if (num === want) s += 10; else if (num) return -1; }
+    const first = /:1ED|1st/i.test(title), english = /英語版/.test(title);
+    const wantFirst = (parts.variants || []).includes('1st Edition'), wantJp = (parts.variants || []).includes('Japanese');
+    s += first === wantFirst ? 3 : -3;
+    if (wantJp) s += english ? -5 : 3; else s += english ? 2 : 0;
+    if (/未開封|パック|ボックス|BOX/i.test(title)) s -= 8; // sealed products
+    return s;
+  }
+
+  function snkrdunk() {
+    const path = location.pathname;
+    if (/^\/apparels\/\d+\/sales-histories/.test(path)) {
+      status('Reading SNKRDUNK sales…');
+      watch(() => {
+        // Rows read as "2026/11/04 PSA10 1,335,000". A hidden view returns them run together
+        // ("2026/11/04PSA101,335,0002026/11/01…"), so match on the text itself, not on line breaks.
+        const text = (document.body.textContent || '').replace(/\s+/g, ' ');
+        const title = norm((document.querySelector('h1') || {}).textContent) || norm(document.title);
+        const conds = Object.keys(SD_GRADES).concat(['PSA8以下', 'BGS9以下', 'ARS10\\+', 'ARS10', 'ARS9', 'ARS8以下', '他鑑定品', '[A-D]'])
+          .sort((a, b) => b.length - a.length).join('|');
+        const re = new RegExp('(\\d{4}/\\d{2}/\\d{2}) ?(' + conds + ') ?(\\d{1,3}(?:,\\d{3})*)(?=\\d{4}/|[^\\d,]|$)', 'g');
+        const rows = [];
+        for (const m of text.matchAll(re)) {
+          const label = SD_GRADES[m[2]];
+          if (!label) continue; // ungraded (A–D), "8 or lower", other graders
+          rows.push({ price: +m[3].replace(/,/g, ''), cur: 'JPY', date: GCP.parseDate(m[1]).toISOString(), title: `${title} ${label}`, url: location.href, scoped: true });
+        }
+        if (!rows.length) return false;
+        send({ type: 'frame-sales', rows, marketPrice: null, cur: 'JPY', product: title });
+        return true;
+      }, 20000, () => send({ type: 'frame-sales', rows: [], marketPrice: null, note: 'SNKRDUNK has no sales history for this card yet.' }));
+      return;
+    }
+    const prod = path.match(/^\/apparels\/(\d+)\/?$/);
+    if (prod) { location.href = `/apparels/${prod[1]}/sales-histories`; return; }
+    // search results → the exact version of the card
+    status('Finding the card on SNKRDUNK…');
+    watch(() => {
+      let best = null;
+      for (const a of document.querySelectorAll('a[href*="/apparels/"]')) {
+        const id = (a.getAttribute('href').match(/\/apparels\/(\d+)\/?$/) || [])[1];
+        if (!id) continue;
+        const t = norm(a.innerText);
+        const sc = sdScore(t);
+        if (sc > 0 && (!best || sc > best.sc)) best = { id, sc, t };
+      }
+      if (!best) return false;
+      status('Opening ' + best.t.slice(0, 50) + '…');
+      location.href = `/apparels/${best.id}/sales-histories`;
+      return true;
+    }, 15000, () => send({ type: 'frame-sales', rows: [], marketPrice: null, note: 'This card isn’t on SNKRDUNK (it mostly lists Japanese cards and popular English ones).' }));
+  }
+
+  // ---------------------------------------------------------------- Terapeak (eBay Seller Hub → Research)
+  // Sold tab: one row per sold listing with title (item link), average sold price, and date last sold.
+  // These are eBay's actual sold prices, so accepted best offers show their real amount.
+  function terapeak() {
+    status('Reading Terapeak sold listings…');
+    let last = '';
+    const read = () => {
+      const rows = [];
+      const seen = new Set();
+      for (const a of document.querySelectorAll('a[href*="/itm/"]')) {
+        const row = a.closest('tr, [role="row"], li, .research-table-row') || a.parentElement && a.parentElement.parentElement;
+        if (!row || seen.has(row)) continue;
+        seen.add(row);
+        const text = norm(row.innerText || row.textContent);
+        const money = GCP.parseMoney(text);
+        const date = GCP.parseDate(text.replace(/\b\d+\s+(sold|total)\b/gi, ''));
+        if (!money || !date) continue;
+        const id = (a.href.match(/\/itm\/(?:[^/]+\/)?(\d{9,})/) || [])[1] || null;
+        const qty = +((text.match(/\b(\d+)\s*(?:sold|total sold)\b/i) || [])[1] || 1);
+        rows.push({ price: money.amount, cur: money.cur || 'CAD', date: date.toISOString(), title: norm(a.innerText || a.textContent) || text.slice(0, 140),
+          url: a.href.split('?')[0], itemId: id, realBestOffer: true, qty });
+      }
+      return rows;
+    };
+    watch(() => {
+      const rows = read();
+      const sig = rows.length + ':' + (rows[0] && rows[0].itemId);
+      if (rows.length && sig !== last) { last = sig; send({ type: 'frame-sales', rows, marketPrice: null, cur: 'CAD' }); }
+      return rows.length >= 50;
+    }, 30000, () => {
+      if (last) return;
+      const t = norm(document.body.innerText).slice(0, 4000);
+      const note = /sign in|sign-in/i.test(t) && !/sign out/i.test(t) ? 'Sign in to eBay in the Terapeak window.'
+        : /seller hub|get started|opt in|subscribe/i.test(t) ? 'Open Seller Hub → Research once in the Terapeak window to turn on Terapeak (free).'
+        : 'No sold listings on Terapeak for this search.';
+      send({ type: 'frame-sales', rows: [], marketPrice: null, note });
+    });
+  }
+
   // SPA route changes: re-run when the path changes.
   let lastPath = '';
   function route() {
     if (location.pathname + location.search === lastPath) return;
     lastPath = location.pathname + location.search;
-    ({ collectr, alt, cardladder })[platform]();
+    ({ collectr, alt, cardladder, snkrdunk, terapeak })[platform]();
   }
   route();
   setInterval(route, 1000);

@@ -18,23 +18,20 @@
   <h1>Graded Card Pricer · Settings</h1>
   <h2>Behavior</h2>
   <label class="row"><input type="checkbox" id="pokemonOnly"> Only detect Pokémon cards (skip sports and other graded cards)</label>
-  <label class="row"><input type="checkbox" id="trimOutliers"> Trim outliers (mislabeled listings) from averages by default</label>
-  <label class="row"><input type="checkbox" id="excludeBestOffers"> Leave eBay “best offer accepted” sales out of averages unless 130point shows the real price</label>
   <label class="row"><input type="checkbox" id="autoCollectr"> Load Collectr’s public price with every search (when no Collectr window is connected)</label>
   <label class="row"><input type="checkbox" id="autoScan"> Keep scanning pages in the background and show a badge count (off = scan when the panel opens and when you press Scan)</label>
 
   <h2>Currency</h2>
   <p class="help">All prices are shown in Canadian dollars. eBay is searched on <b>eBay.ca</b>. Collectr, Alt and Card Ladder show CAD if you set CAD in
-    your account there. The extension also switches Collectr’s currency menu to CAD. Prices that still come through in US$ (PriceCharting, most of
-    130point) are converted at the Bank of Canada daily rate and marked “≈”.</p>
-  <label class="row"><input type="checkbox" id="includeConverted"> Include converted US$ sales in averages (off = Canadian-dollar prices only)</label>
+    your account there. The extension also switches Collectr’s currency menu to CAD. Prices in other currencies (PriceCharting and 130point in US$, SNKRDUNK in ¥) are
+    converted at the Bank of Canada daily rate and marked “≈”. Every matching sale counts, best offers included.</p>
   <div class="row"><span class="name">eBay.ca sellers</span>
     <select id="ebayLocation"><option value="all">All sellers (eBay.ca default, prices in CAD)</option><option value="canada">Canada-only sellers</option></select></div>
 
   <h2>API keys <span class="muted" style="text-transform:none;letter-spacing:0">(stored on this computer only)</span></h2>
-  <p class="help"><b>eBay:</b> with an eBay developer key approved for the <em>Marketplace Insights</em> (sold items) API, eBay.ca sales load directly,
-    with exact sale times and no “Open sold results” step. Create keys at developer.ebay.com → Application Keys (Production), then request
-    Marketplace Insights access. eBay approves this API case by case. Until then the extension uses the eBay.ca website.</p>
+  <p class="help"><b>eBay:</b> your Production App ID and Cert ID (developer.ebay.com → Application Keys) power the
+    <b>Current listings</b> section (cheapest matching Buy It Now listings on eBay.ca) through eBay's standard listings API. eBay has closed
+    its sold-items API (Marketplace Insights) to new apps, so sold prices come from the eBay.ca website, Terapeak (connect it in the panel) and 130point.</p>
   <div class="row"><span class="name">eBay App ID</span><input type="text" id="ebayAppId" placeholder="Client ID" autocomplete="off" spellcheck="false"></div>
   <div class="row"><span class="name">eBay Cert ID</span><input type="password" id="ebayCertId" placeholder="Client Secret" autocomplete="off"></div>
   <div class="row"><span class="name"></span><button class="ghost" id="testEbay" type="button">Test eBay key</button><span id="ebayResult" class="muted"></span></div>

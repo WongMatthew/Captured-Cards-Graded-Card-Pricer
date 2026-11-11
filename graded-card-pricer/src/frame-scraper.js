@@ -300,17 +300,62 @@
 
   // ---------------------------------------------------------------- Card Ladder
   function cardladder() {
-    status('Reading Card Ladder sales…');
+    // Card Ladder sales-history rows: date, sold price, listing title, marketplace (eBay, Goldin, Fanatics…).
+    status('Reading Card Ladder…');
     let last = '';
+    const read = () => {
+      const root = document.querySelector('main, [role="main"]') || document.body;
+      const rows = rowsIn(root, false).map(r => {
+        const via = (r.title.match(/\b(eBay|Goldin|Fanatics(?: Collect)?|PWCC|Heritage|MySlabs|Alt|Probstein|Pristine Auction|REA|Lelands|Memory Lane|Collectable|Courtyard)\b/i) || [])[1];
+        // tidy the title: drop the row's date, prices and marketplace name
+        const title = r.title.replace(/\b(?:[A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s+\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/g, ' ')
+          .replace(/(?:US|C|CA)?\s?\$\s?[\d,]+(?:\.\d{1,2})?/g, ' ').replace(via ? new RegExp('\\b' + via + '\\b', 'i') : /$^/, ' ').replace(/\s+/g, ' ').trim();
+        return { ...r, title: title || r.title, scoped: false, via: via && !/ebay/i.test(via) ? via : undefined };
+      });
+      // Card Ladder's own value for the card ("CL Value", "Card Ladder Value")
+      const text = norm(document.body.innerText);
+      const v = (text.match(/\b(?:CL|Card Ladder)\s*Value[^$]{0,24}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
+      return { rows, value: v ? GCP.parseMoney(v) : null };
+    };
     watch(() => {
-      const rows = rowsIn(document.querySelector('main') || document.body, false).map(r => ({ ...r, scoped: false }));
-      const sig = rows.length + ':' + (rows[0] && rows[0].title);
-      if (rows.length && sig !== last) { last = sig; send({ type: 'frame-sales', rows, marketPrice: null, cur: pageCurrency() || 'USD' }); }
-      return rows.length >= 10;
-    }, 25000, () => {
-      const signedOut = /log ?in|sign ?in|subscribe/i.test(norm(document.body.innerText).slice(0, 3000));
-      if (!last) send({ type: 'frame-sales', rows: [], marketPrice: null, note: signedOut ? 'Sign in to Card Ladder in the 📱 window to see sales history.' : 'No sales found on Card Ladder for this search.' });
+      const { rows, value } = read();
+      const sig = rows.length + ':' + (rows[0] && rows[0].title) + ':' + (value && value.amount);
+      if ((rows.length || value) && sig !== last) {
+        last = sig;
+        send({ type: 'frame-sales', rows, marketPrice: value ? value.amount : null, cur: (value && value.cur) || pageCurrency() || 'USD' });
+      }
+      return rows.length >= 15;
+    }, 30000, () => {
+      if (last) return;
+      const t = norm(document.body.innerText).slice(0, 3000);
+      const note = /verif(y|ication)|are you human|just a moment/i.test(t) ? 'Card Ladder is showing a security check: complete it in the Card Ladder window.'
+        : /log ?in|sign ?in|create (an )?account/i.test(t) && !/log ?out|sign ?out/i.test(t) ? 'Sign in to Card Ladder in its window.'
+        : learned() ? 'No sales found on Card Ladder for this search.'
+        : 'Search this card once yourself in the Card Ladder window (Sales History). The extension learns that page and follows every search after.';
+      send({ type: 'frame-sales', rows: [], marketPrice: null, note });
     });
+  }
+
+  // ---------------------------------------------------------------- learning a site's search page
+  // When you search in a signed-in window yourself, remember the address with your search text replaced by {q},
+  // so later searches from the panel open that same kind of page.
+  let learnedOnce = false;
+  const learned = () => learnedOnce || sessionStorage.getItem('gcp-learned') === '1';
+  function learnSearchUrl() {
+    const inputs = [...document.querySelectorAll('input[type="search"], input[type="text"], input:not([type])')].filter(i => visible(i) && i.value && i.value.trim().length > 2);
+    for (const input of inputs) {
+      const v = input.value.trim();
+      const href = location.href.replace(/#.*$/, '');
+      for (const form of [encodeURIComponent(v), encodeURIComponent(v).replace(/%20/g, '+'), v.replace(/ /g, '+'), v.replace(/ /g, '%20'), v]) {
+        if (form && href.includes(form)) {
+          const template = href.replace(form, '{q}');
+          chrome.runtime.sendMessage({ type: 'learn-url', platform, template }).catch(() => {});
+          learnedOnce = true;
+          sessionStorage.setItem('gcp-learned', '1');
+          return;
+        }
+      }
+    }
   }
 
   // ---------------------------------------------------------------- SNKRDUNK (Japan)
@@ -427,4 +472,5 @@
   }
   route();
   setInterval(route, 1000);
+  if (['cardladder', 'alt', 'collectr', 'terapeak'].includes(platform)) setInterval(learnSearchUrl, 2000);
 })();

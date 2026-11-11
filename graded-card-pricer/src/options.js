@@ -84,3 +84,16 @@ $('#testPpt').onclick = async () => {
       (remaining != null ? ` · ${remaining} credits left today` : '') + (restricted ? ` · ${restricted}` : '');
   } catch (e) { out.textContent = ' ' + e.message; }
 };
+
+$('#testPsa').onclick = async () => {
+  const out = $('#psaResult');
+  const cert = $('#psaTestCert').value.trim();
+  if (!/^\d{7,10}$/.test(cert)) { out.textContent = ' Enter a PSA cert number first.'; return; }
+  out.textContent = ' Testing…';
+  try {
+    const info = await P.psaCertViaApi(cert, $('#psaApiKey').value);
+    const q = await P.psaQuota();
+    out.textContent = ` Works: ${info.query} · pop ${info.pop ?? '?'}${info.specPop ? ' · population by grade ✓' : ''}` +
+      `${info.fromCache ? ' (remembered, no call used)' : ''} · PSA calls used today: ${q.used}/100`;
+  } catch (e) { out.textContent = ' ' + e.message; }
+};

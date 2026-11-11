@@ -81,7 +81,8 @@
   const JUNK_RE = /\b(lot of|\d+\s*card lot|lots|bundle|proxy|custom|replica|fake|repack|mystery|you pick|choose|u pick|pick your|digital|code card|reprint|fan art|sticker|empty|case only|slab only|label only|no card|read description|art card|metal card|orica)\b/i;
 
   const enc = (q) => encodeURIComponent(q).replace(/%20/g, '+');
-  const fill = (tpl, q) => tpl.replace('{q}', enc(q));
+  // {q} after "?" → form encoding ("+" for spaces); {q} inside the path → %20.
+  const fill = (tpl, q) => tpl.replace('{q}', tpl.indexOf('?') >= 0 && tpl.indexOf('?') < tpl.indexOf('{q}') ? enc(q) : encodeURIComponent(q));
   const cardOnly = (parts) => [parts.name, parts.number].filter(Boolean).join(' ').trim();
 
   async function getText(url, init = {}, timeout = 20000) {
@@ -638,46 +639,80 @@
     return info;
   }
 
+  // A pasted token may include "Bearer ", quotes or spaces/new lines: send just the token.
+  const psaToken = (t) => String(t || '').replace(/^\s*["']?\s*bearer\s+/i, '').replace(/["'\s]/g, '');
+
   // PSA's official public API (free key from psacard.com → My Account → API). Returns null when no key is set.
-  async function psaCertViaApi(cert, token) {
-    if (!token) return null;
-    const res = await fetch(`https://api.psacard.com/publicapi/cert/GetByCertNumber/${encodeURIComponent(cert)}`, {
-      headers: { Authorization: 'bearer ' + token.trim(), Accept: 'application/json' }
-    });
+  // ---- PSA's free API allows 100 calls a day: every call goes through here so it can be counted, cached and paused.
+  const utcDay = () => new Date().toISOString().slice(0, 10);
+  async function psaQuota() {
+    const { psaQuota: q } = await chrome.storage.local.get('psaQuota');
+    return q && q.day === utcDay() ? q : { day: utcDay(), used: 0, pausedUntil: (q && q.pausedUntil) || 0 };
+  }
+  async function psaFetch(path, token) {
+    const q = await psaQuota();
+    if (q.pausedUntil > Date.now()) {
+      const hrs = Math.max(1, Math.round((q.pausedUntil - Date.now()) / 36e5));
+      throw Object.assign(new Error(`PSA’s 100-calls-a-day limit is used up (resets in about ${hrs} h)`), { quota: true });
+    }
+    const res = await fetch('https://api.psacard.com/publicapi' + path, { headers: { Authorization: 'bearer ' + psaToken(token), Accept: 'application/json' } });
+    q.used++;
+    if (res.status === 429) {
+      const wait = (parseInt(res.headers.get('retry-after'), 10) || 3600) * 1000;
+      q.pausedUntil = Date.now() + wait;
+      q.used = Math.max(q.used, 100);
+      await chrome.storage.local.set({ psaQuota: q });
+      throw Object.assign(new Error(`PSA’s 100-calls-a-day limit is used up (resets in about ${Math.max(1, Math.round(wait / 36e5))} h)`), { quota: true });
+    }
+    await chrome.storage.local.set({ psaQuota: q });
     if (res.status === 401 || res.status === 403) {
       // e.g. "Access to this API is limited to approved customers." (account not yet approved) or an expired token
       let msg = '';
       try { msg = (await res.json()).Message || ''; } catch (e) { /* not JSON */ }
       throw new Error('PSA API: ' + (msg || 'the key in Settings was rejected (expired?)'));
     }
-    if (res.status === 429) throw new Error('PSA API daily limit reached');
     if (!res.ok) throw new Error('PSA API HTTP ' + res.status);
-    const j = await res.json();
-    const c = j && (j.PSACert || j.psaCert);
-    if (!c || !c.Subject) throw new Error('PSA has no record of cert ' + cert);
-    const info = {
-      grader: 'PSA', cert, subject: c.Subject, brand: c.Brand, year: c.Year, cardNumber: c.CardNumber, variety: c.Variety,
-      gradeText: c.CardGrade || c.GradeDescription, pop: c.TotalPopulation, popHigher: c.PopulationHigher, url: CERT_PAGES.PSA(cert)
-    };
-    info.specId = c.SpecID;
-    info.popWithQualifier = c.TotalPopulationWithQualifier;
-    const [pop, images] = await Promise.all([
-      psaSpecPop(c.SpecID, token).catch(() => null),
-      psaCertImages(cert, token).catch(() => [])
-    ]);
-    info.specPop = pop;
-    info.images = images;
-    return { ...info, query: certToQuery(info) };
+    return res.json();
+  }
+
+  // Cert details never change, so each cert is fetched once and remembered; its population is refreshed weekly.
+  async function psaCertViaApi(cert, token) {
+    if (!token) return null;
+    const ck = 'psaCert:' + cert;
+    const cached = (await chrome.storage.local.get(ck))[ck];
+    if (cached && Date.now() - cached.at < 7 * 864e5) return { ...cached.info, fromCache: true };
+    let info = cached && cached.info;
+    if (!info) {
+      const j = await psaFetch(`/cert/GetByCertNumber/${encodeURIComponent(cert)}`, token);
+      const c = j && (j.PSACert || j.psaCert);
+      if (!c || !c.Subject) throw new Error('PSA has no record of cert ' + cert);
+      info = {
+        grader: 'PSA', cert, subject: c.Subject, brand: c.Brand, year: c.Year, cardNumber: c.CardNumber, variety: c.Variety,
+        gradeText: c.CardGrade || c.GradeDescription, pop: c.TotalPopulation, popHigher: c.PopulationHigher, url: CERT_PAGES.PSA(cert),
+        specId: c.SpecID, popWithQualifier: c.TotalPopulationWithQualifier
+      };
+      info.query = certToQuery(info);
+    }
+    // population by grade (1 call); stale copy kept if PSA's limit is reached
+    try { info.specPop = await psaSpecPop(info.specId, token); } catch (e) { if (!info.specPop) info.specPop = null; }
+    await chrome.storage.local.set({ [ck]: { at: Date.now(), info } });
+    return info;
+  }
+
+  // Slab photos on request (1 call), remembered per cert.
+  async function psaPhotos(cert, token) {
+    const ck = 'psaImg:' + cert;
+    const cached = (await chrome.storage.local.get(ck))[ck];
+    if (cached) return cached;
+    const imgs = await psaCertImages(cert, token);
+    await chrome.storage.local.set({ [ck]: imgs });
+    return imgs;
   }
 
   // Slab photos: GET /cert/GetImagesByCertNumber/{cert}. The schema is an untyped object, so read any image URLs
   // and use an "is front" style flag when present.
   async function psaCertImages(cert, token) {
-    const res = await fetch(`https://api.psacard.com/publicapi/cert/GetImagesByCertNumber/${encodeURIComponent(cert)}`, {
-      headers: { Authorization: 'bearer ' + token.trim(), Accept: 'application/json' }
-    });
-    if (!res.ok) return [];
-    const j = await res.json();
+    const j = await psaFetch(`/cert/GetImagesByCertNumber/${encodeURIComponent(cert)}`, token);
     const out = [];
     const walk = (v) => {
       if (Array.isArray(v)) return v.forEach(walk);
@@ -695,11 +730,7 @@
   // Grade-by-grade PSA population for a card (spec). Field names like Grade10, Grade9, Grade8_5, Auth, Total.
   async function psaSpecPop(specId, token) {
     if (!specId) return null;
-    const res = await fetch(`https://api.psacard.com/publicapi/pop/GetPSASpecPopulation/${encodeURIComponent(specId)}`, {
-      headers: { Authorization: 'bearer ' + token.trim(), Accept: 'application/json' }
-    });
-    if (!res.ok) return null;
-    const j = await res.json();
+    const j = await psaFetch(`/pop/GetPSASpecPopulation/${encodeURIComponent(specId)}`, token);
     const p = j && (j.PSAPop || j.psaPop || j);
     const grades = {};
     for (const [k, v] of Object.entries(p || {})) {
@@ -762,7 +793,7 @@
     if (id === 'pricecharting') return fill(cfg.url, [searchCore(parts), parts.numberKey].filter(Boolean).join(' ') || query);
     if (id === 'collectr') return fill(cfg.url, parts.name || query);
     if (id === 'alt') return fill(cfg.url, root.GCP.coreName(parts) || query);
-    if (id === 'cardladder') return fill(cfg.url, [cardOnly(parts), gradeLabel(parts)].join(' '));
+    if (id === 'cardladder') return fill(cfg.url, [searchCore(parts), parts.number || parts.numberKey, gradeLabel(parts)].filter(Boolean).join(' '));
     if (id === 'terapeak') {
       const n = numberForms(parts);
       return fill(cfg.url, [searchCore(parts), n[1] || n[0] || '', gradeLabel(parts)].filter(Boolean).join(' '));
@@ -773,5 +804,5 @@
     return cfg.url;
   }
 
-  root.GCPPlatforms = { pricetracker, pptFind, pptGet, pptGradeKey, ebayAsks, parseEbayActive, ebayBasicToken, snkrdunkFind, snkrdunkScore, searchCore, numberForms, certViaWeb, parseCertHtml, psaCertImages, parsePriceChartingInfo, migrateSettings, LOGIN_SOURCES, pageCurrency, SECRET_KEYS, getRates, toCAD, ebayViaApi, CERT_PAGES, certToQuery, psaCertViaApi, DEFAULTS, META, FETCHERS, JUNK_RE, fill, pageUrl, ebayQuery, parseEbay, parsePriceCharting, parse130, pickPriceChartingProduct };
+  root.GCPPlatforms = { psaPhotos, psaQuota, pricetracker, pptFind, pptGet, pptGradeKey, ebayAsks, parseEbayActive, ebayBasicToken, snkrdunkFind, snkrdunkScore, searchCore, numberForms, certViaWeb, parseCertHtml, psaCertImages, parsePriceChartingInfo, migrateSettings, LOGIN_SOURCES, pageCurrency, SECRET_KEYS, getRates, toCAD, ebayViaApi, CERT_PAGES, certToQuery, psaCertViaApi, DEFAULTS, META, FETCHERS, JUNK_RE, fill, pageUrl, ebayQuery, parseEbay, parsePriceCharting, parse130, pickPriceChartingProduct };
 })(globalThis);

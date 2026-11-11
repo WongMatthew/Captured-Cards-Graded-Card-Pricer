@@ -43,6 +43,9 @@ async function loadSettings() {
   settings.excludeBestOffers = false;
   settings.includeConverted = true;
   secrets = await chrome.storage.local.get(P.SECRET_KEYS);
+  // Search pages learned from your own searches in signed-in windows (Card Ladder, Alt, Collectr, Terapeak).
+  const { learnedUrls = {} } = await chrome.storage.local.get('learnedUrls');
+  for (const [id, t] of Object.entries(learnedUrls)) if (settings.platforms[id] && t.includes('{q}')) settings.platforms[id].url = t;
   settings.psaApiKey = secrets.psaApiKey || '';
 }
 async function refreshConnected() {
@@ -61,7 +64,6 @@ function safeHost(url) { try { return new URL(url).hostname; } catch (e) { retur
 async function scanTab({ initial = false } = {}) {
   const tab = await activeTab();
   if (!tab) return;
-  $('#tabPrompt').hidden = true;
   const btn = $('#scanBtn');
   btn.textContent = 'Scanning…';
   btn.disabled = true;
@@ -113,22 +115,6 @@ function renderChips() {
   }
 }
 
-// When the user switches tabs or the page changes, offer a scan instead of doing one.
-async function onTabChange() {
-  const tab = await activeTab();
-  if (!tab || !scanned.tabId) return;
-  if (tab.id === scanned.tabId && !scanned.navigated) { $('#tabPrompt').hidden = true; return; }
-  if (isMarketplace(tab.url) || !/^https?:/.test(tab.url || '')) { $('#tabPrompt').hidden = true; return; }
-  $('#tabPromptText').textContent = `Now viewing “${tab.title || safeHost(tab.url)}”`;
-  $('#tabPrompt').hidden = false;
-}
-chrome.tabs.onActivated.addListener(onTabChange);
-chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status !== 'complete') return;
-  if (tabId === scanned.tabId) scanned.navigated = true;
-  onTabChange();
-});
-
 // ================================================================ cache & prefs
 const cacheKey = (id, q) => `cache:${CACHE_VER}:${id}:${q.toLowerCase()}`;
 async function cacheGet(id, q) {
@@ -168,7 +154,8 @@ async function lookupCert(c) {
   const meta = $('#summaryMeta');
   meta.innerHTML = '';
   meta.append(`Couldn’t look up this cert automatically (${why.join('; ')}). ` +
-    (c.grader === 'PSA' ? 'Once PSA approves your API key (Settings → Test PSA key), cert lookups are instant. For now: ' : ''));
+    (c.grader !== 'PSA' ? '' : why.some(w => /calls-a-day/.test(w)) ? 'Until PSA’s daily limit resets: '
+      : settings.psaApiKey ? 'For now: ' : 'Add your PSA API key in Settings for instant cert lookups. For now: '));
   if (make) {
     const b = document.createElement('button');
     b.className = 'ghost';
@@ -215,7 +202,6 @@ async function search(q, opts = {}) {
   const certMeta = opts.cert ? `${opts.cert.grader} cert #${opts.cert.cert}${opts.cert.pop ? ` · pop ${opts.cert.pop}${opts.cert.popHigher != null ? ` (${opts.cert.popHigher} higher)` : ''}` : ''}` : '';
   showSummaryShell(q, parts.grade ? certMeta : 'No grade in the search: add one, e.g. “PSA 10”.');
   renderChips();
-  renderGradeBar();
   renderWatchButton();
 
   runAsks();
@@ -321,8 +307,9 @@ function toggleForced(key) {
   reclassify();
 }
 function toggleExcluded(key) {
+  const keys = Array.isArray(key) ? key : [key];
   const x = new Set(state.prefs.excluded);
-  x.has(key) ? x.delete(key) : x.add(key);
+  if (keys.some(k => x.has(k))) keys.forEach(k => x.delete(k)); else keys.forEach(k => x.add(k));
   state.prefs.excluded = [...x];
   savePrefs();
   Object.keys(state.src).forEach(renderSource);
@@ -389,7 +376,7 @@ function saleLi(s, withSource) {
     <div style="min-width:0"><a class="t" href="${esc(s.url || state.src[s.platform]?.url || '#')}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(s.title || '(untitled)')}</a>
     <div class="d">${shortDate(s.date)} · ${relDay(s.date)}${tags ? ' · ' + esc(tags) : ''}</div></div>
     <button class="p" title="${excluded ? 'Left out: click to count it again' : 'Click to leave this sale out'}">${s.converted ? '≈' : ''}${money(s.price)}</button>`;
-  li.querySelector('.p').onclick = () => toggleExcluded(s.key);
+  li.querySelector('.p').onclick = () => toggleExcluded(s.keys || s.key);
   return li;
 }
 
@@ -619,21 +606,87 @@ async function takePending() {
 }
 
 // ================================================================ aggregation
+// ---------------------------------------------------------------- one entry per real sale
+// Pass 1: the same eBay item number from several sources is one sale.
+// Pass 2: sources that don't carry item numbers (Card Ladder, Alt, some 130point / PriceCharting rows) are matched on
+// same day (±1, time zones), same price (exact in the same currency, within 2.5% after conversion) and similar title.
+// Two sales from the SAME source are never merged (sellers do sell two copies the same day), nor are two different
+// item numbers.
+const DUP_STOP = new Set('pokemon pokémon card cards tcg psa bgs cgc sgc tag gem mint mt 10 9 holo rare english the and of new graded'.split(' '));
+function titleTokens(t) {
+  return new Set(String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9/]+/g, ' ')
+    .split(' ').map(w => w.replace(/^0+(\d)/, '$1')).filter(w => w && !DUP_STOP.has(w)));
+}
+function titleSimilarity(a, b) {
+  const A = titleTokens(a), B = titleTokens(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const w of A) if (B.has(w)) inter++;
+  return inter / Math.min(A.size, B.size); // overlap: one site's title is often a shortened version of another's
+}
+function samePrice(a, b) {
+  if (a.orig && b.orig && a.orig.cur === b.orig.cur) return Math.abs(a.orig.amount - b.orig.amount) <= Math.max(0.5, a.orig.amount * 0.005);
+  if (!a.converted && !b.converted) return Math.abs(a.price - b.price) <= Math.max(0.5, a.price * 0.005);
+  return Math.abs(a.price - b.price) <= a.price * 0.025;
+}
+// Where the sale actually happened. Only sales from the same marketplace can be the same sale.
+function marketOf(s) {
+  if (s.platform === 'snkrdunk') return 'snkrdunk';
+  const v = String(s.via || '').toLowerCase();
+  if (!v || /ebay/.test(v)) return 'ebay';
+  if (/tcg ?player/.test(v)) return 'tcgplayer';
+  if (/fanatics|pwcc/.test(v)) return 'fanatics';
+  return v.replace(/\s+(auctions?|collect)$/, '');
+}
+function sameSale(c, s) {
+  if (marketOf(c) !== marketOf(s)) return false;                           // SNKRDUNK ≠ eBay ≠ Goldin …
+  if (c.platforms.has(s.platform)) return false;                         // never two sales from one source
+  if (c.itemId && s.itemId && c.itemId !== s.itemId) return false;       // two different eBay items
+  if (Math.abs(c.date - s.date) > 1.5 * 864e5) return false;             // same day, ±1
+  const sim = titleSimilarity(c.title, s.title);
+  // eBay hides an accepted best offer's real price: the other source's (lower) price is the real one.
+  const hidden = (x, y) => x.bestOffer && !x.realBestOffer && y.price <= x.price * 1.02 && y.price >= x.price * 0.5;
+  if (hidden(c, s) || hidden(s, c)) return sim >= 0.6;
+  return samePrice(c, s) && sim >= 0.5;
+}
+
 function mergedAll() {
-  const out = new Map();
+  const byKey = new Map();
   for (const id of ORDER) {
     const r = state.src[id];
     if (!r || !r.include) continue;
     for (const s of r.sales) {
       if (state.prefs.excluded.includes(s.key)) continue;
-      const prev = out.get(s.key);
-      if (!prev) { out.set(s.key, { ...s, sources: [id] }); continue; }
-      if (!prev.sources.includes(id)) prev.sources.push(id);
-      if (s.realBestOffer && prev.bestOffer && !prev.realBestOffer) Object.assign(prev, { price: s.price, realBestOffer: true, converted: s.converted, orig: s.orig });
-      if (!prev.img && s.img) prev.img = s.img;
+      const prev = byKey.get(s.key);
+      if (!prev) { byKey.set(s.key, { ...s, sources: [id], platforms: new Set([id]), keys: [s.key] }); continue; }
+      absorb(prev, { ...s, platform: id });
     }
   }
-  return [...out.values()].sort((a, b) => b.date - a.date);
+  // Pass 2: fuzzy match across sources. Item-numbered and CAD-native sales go first so they become the main entry.
+  const rank = (x) => (x.itemId ? 0 : 2) + (x.converted ? 1 : 0);
+  const pool = [...byKey.values()].sort((a, b) => rank(a) - rank(b) || b.date - a.date);
+  const out = [];
+  let merged = 0;
+  for (const s of pool) {
+    const hit = out.find(c => [...s.platforms].every(p => !c.platforms.has(p)) && sameSale(c, s));
+    if (hit) { absorb(hit, s); merged++; } else out.push(s);
+  }
+  state.dupesMerged = merged;
+  return out.sort((a, b) => b.date - a.date);
+}
+
+// Fold a duplicate into the main entry: keep every source, prefer a real accepted-offer price, exact times and images.
+function absorb(main, dup) {
+  for (const p of dup.platforms || [dup.platform]) { main.platforms.add(p); if (!main.sources.includes(p)) main.sources.push(p); }
+  for (const k of dup.keys || [dup.key]) if (!main.keys.includes(k)) main.keys.push(k);
+  if (dup.bestOffer) main.bestOffer = true;
+  if (main.bestOffer && !main.realBestOffer && (dup.realBestOffer || !dup.bestOffer) && dup.price < main.price) {
+    Object.assign(main, { price: dup.price, realBestOffer: true, converted: dup.converted, orig: dup.orig });
+  }
+  if (!main.itemId && dup.itemId) main.itemId = dup.itemId;
+  if (!main.img && dup.img) main.img = dup.img;
+  if (!main.exact && dup.exact) { main.date = dup.date; main.exact = true; }
+  if (!main.url && dup.url) main.url = dup.url;
 }
 
 function aggregate() {
@@ -695,6 +748,7 @@ function aggregate() {
     busy ? 'Searching sources…' : `${week.length} sale${week.length === 1 ? '' : 's'} this week from ${srcs.size} source${srcs.size === 1 ? '' : 's'}`,
     before > week.length ? `${before - week.length} outlier${before - week.length > 1 ? 's' : ''} trimmed` : '',
     rejected ? `${rejected} other listings filtered out` : '',
+    state.dupesMerged ? `${state.dupesMerged} duplicate${state.dupesMerged > 1 ? 's' : ''} merged (same sale on several sites)` : '',
     state.allow.length ? `treated as ${state.allow.join(', ')} card` : '',
     pendingEmbeds ? 'loading Alt/Collectr…' : ''
   ].filter(Boolean).join(' · ');
@@ -794,12 +848,20 @@ function renderCardInfo() {
   if (state.cert && state.cert.subject) {
     facts.push(`<span>Slab: <b>${esc(state.cert.grader)} #${esc(state.cert.cert)}</b> · ${esc([state.cert.year, state.cert.brand, state.cert.gradeText].filter(Boolean).join(' · '))}` +
       `${state.cert.pop != null ? ` · pop <b>${num(state.cert.pop)}</b>` : ''}${state.cert.popHigher != null ? ` · <b>${num(state.cert.popHigher)}</b> higher` : ''}` +
-      `${(state.cert.images || []).length ? ' · photos: ' + state.cert.images.map((im, i) => `<a href="${esc(im.url)}" target="_blank" rel="noopener">${im.front ? 'front' : i === 1 ? 'back' : 'photo ' + (i + 1)}</a>`).join(' · ') : ''}</span>`);
+      `${(state.cert.images || []).length ? ' · photos: ' + state.cert.images.map((im, i) => `<a href="${esc(im.url)}" target="_blank" rel="noopener">${im.front ? 'front' : i === 1 ? 'back' : 'photo ' + (i + 1)}</a>`).join(' · ')
+        : state.cert.grader === 'PSA' && settings.psaApiKey ? ' · <a href="#" id="slabPhotos">📷 slab photos</a>' : ''}</span>`);
   }
   const block = $('#popBlock');
   block.hidden = !graders.length && !facts.length;
   if (block.hidden) return;
   $('#cardFacts').innerHTML = facts.join('');
+  const sp = $('#slabPhotos');
+  if (sp) sp.onclick = async (e) => {
+    e.preventDefault();
+    sp.textContent = 'loading photos…';
+    try { state.cert.images = await P.psaPhotos(state.cert.cert, settings.psaApiKey); renderCardInfo(); }
+    catch (err) { sp.textContent = err.message; }
+  };
 
   // grader tabs
   const want = state.parts.grader;
@@ -855,6 +917,10 @@ function renderRefs() {
   if (pp && pp.summary) { const x = pptCad(pp.summary); if (x.value) refs.push(`<b>Pokemon Price Tracker</b> ${esc(x.text)}`); }
   const co = state.src.collectr;
   if (co && co.marketPrice != null) refs.push(`<b>Collectr</b> market ${money(co.marketPrice)}`);
+  const cl = state.src.cardladder;
+  if (cl && cl.marketPrice != null) refs.push(`<b>Card Ladder</b> value ${money(cl.marketPrice)}`);
+  const al = state.src.alt;
+  if (al && al.marketPrice != null) refs.push(`<b>Alt</b> value ${money(al.marketPrice)}`);
   el.innerHTML = refs.join('<br>');
   el.hidden = !refs.length;
 }
@@ -1078,22 +1144,6 @@ function switchGrade(label) {
   if (!p) return;
   search([p.name, p.number, label].filter(Boolean).join(' '));
 }
-function renderGradeBar() {
-  const bar = $('#gradeBar');
-  const cur = state.parts ? GCP.gradeLabel(state.parts) : '';
-  const opts = cur && !GRADE_BAR.includes(cur) ? [cur, ...GRADE_BAR] : GRADE_BAR;
-  bar.innerHTML = '';
-  for (const g of opts) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.textContent = g;
-    b.disabled = !state.parts;
-    if (g === cur) b.className = 'active';
-    b.onclick = () => switchGrade(g);
-    bar.appendChild(b);
-  }
-}
-
 // ================================================================ watchlist
 async function loadWatchlist() {
   watchlist = (await chrome.storage.local.get('watchlist')).watchlist || {};
@@ -1180,16 +1230,14 @@ $('#searchForm').addEventListener('submit', (e) => {
 });
 $('#refreshBtn').onclick = () => state.cert && !state.parts ? lookupCert(state.cert) : search(state.query, { force: true, askPrice: askValue(), cert: state.cert });
 $('#scanBtn').onclick = () => scanTab();
-$('#tabPromptScan').onclick = () => scanTab();
 $('#ask').addEventListener('input', () => { renderDeal(); drawChart(); });
-chrome.storage.onChanged.addListener((changes, area) => { if (area === 'sync' || (area === 'local' && P.SECRET_KEYS.some(k => k in changes))) loadSettings(); });
+chrome.storage.onChanged.addListener((changes, area) => { if (area === 'sync' || (area === 'local' && (P.SECRET_KEYS.some(k => k in changes) || 'learnedUrls' in changes))) loadSettings(); });
 
 (async function init() {
   await loadSettings();
   fx = await P.getRates();
   await refreshConnected();
   await loadWatchlist();
-  renderGradeBar();
   const pending = await takePending();
   // First open: scan the current page once. After that, scanning only happens when asked.
   await scanTab({ initial: !pending });

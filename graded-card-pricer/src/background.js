@@ -133,6 +133,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     openCompanion(msg.platform, msg.url, { focus: msg.focus !== false })
       .then(ok => { reply({ ok }); chrome.runtime.sendMessage({ type: 'companions-changed' }).catch(() => {}); }, e => reply({ ok: false, error: String(e) }));
     return true;
+  } else if (msg.type === 'learn-url') {
+    // Only accept a same-site address that contains the search slot.
+    const ok = typeof msg.template === 'string' && msg.template.includes('{q}') && /^https:\/\//.test(msg.template) && sender.tab;
+    if (ok) chrome.storage.local.get('learnedUrls').then(({ learnedUrls = {} }) => {
+      if (learnedUrls[msg.platform] === msg.template) return;
+      learnedUrls[msg.platform] = msg.template;
+      chrome.storage.local.set({ learnedUrls });
+    });
   } else if (msg.type === 'list-companions') {
     getCompanions().then(c => reply(Object.keys(c)));
     return true;

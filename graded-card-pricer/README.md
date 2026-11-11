@@ -1,4 +1,4 @@
-# Graded Card Pricer (Chrome extension) · v4.2
+# Graded Card Pricer (Chrome extension) · v4.6
 
 Reads the email or page you have open, finds graded Pokémon cards ("Umbreon VMAX 215/203 PSA 10",
 "Charizard Base Set 4/102 BGS 9.5", PSA slab text like "#215 UMBREON VMAX GEM MT 10"), and shows recent **sold**
@@ -43,7 +43,10 @@ prices from eBay, PriceCharting, 130point, Alt and Collectr in one side panel.
 
   A listing that just leaves out "1st Edition" or "Japanese" still counts. Every rejected listing shows its reason, with **Use** to override.
 - **Every matching sale counts.** Best offers count, using 130point's real accepted price when it has one. Nothing is
-  trimmed. The same eBay item reported by several sites counts once.
+  trimmed. **Each sale counts once.** The same eBay item number reported by several sites is one sale. Sources without item
+  numbers (Card Ladder, Alt, some 130point / PriceCharting rows) are matched on marketplace, day (±1), price (exact in
+  the same currency, within 2.5% after conversion) and title. Two sales from the same source are never merged, so a
+  seller's two identical copies sold the same day both count. The merged sale lists every site that reported it.
 - **All in CAD.** Other currencies are converted at the Bank of Canada daily rate and marked "≈".
 - **Summary:**
   - Today, 3-day, 5-day and 7-day averages.
@@ -107,6 +110,15 @@ CAD prices.
 | Card Ladder | Your signed-in Card Ladder sales history | **📱 Connect** once and sign in; the window then follows every search. |
 | Alt | Your signed-in Alt: opens the matching item and reads only rows marked as sold | **📱 Connect** once and sign in. Browse results are active listings and are never counted. |
 | Collectr | The matching product's price per grade | **📱 Connect** to use your paid account (phone-sized window); otherwise the public price loads quietly in the panel. |
+
+**Card Ladder (and other signed-in sources) set up once:**
+1. In the panel, open the **Card Ladder** row and press **📱 Connect**.
+2. In the window that opens, pass any security check and sign in to your PRO account.
+3. Search one card yourself in Card Ladder's **Sales History**. The extension learns that page from your search.
+
+From then on every search in the panel opens that page for the new card. Every sale row (date, price, title, marketplace)
+and Card Ladder's value are read into the panel in CAD, using the same exact-card and grade filtering. Alt, Collectr and
+Terapeak learn the same way.
 
 **Connected windows:** Alt, Collectr and Card Ladder need your login, and Chrome keeps logins out of embedded panels.
 Each gets one real phone-sized window. Sign in once, minimise it if you like, and it follows every new search.

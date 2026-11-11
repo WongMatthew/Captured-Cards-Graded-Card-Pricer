@@ -40,7 +40,9 @@
     and those join your sales list. Each search uses about 8–13 credits.</p>
   <div class="row"><span class="name">PPT API key</span><input type="password" id="pptApiKey" placeholder="paste key" autocomplete="off"></div>
   <div class="row"><span class="name"></span><button class="ghost" id="testPpt" type="button">Test PPT key</button><span id="pptResult" class="muted"></span></div>
-  <p class="help"><b>PSA:</b> with a PSA API key, PSA cert numbers are looked up instantly (with population). Get one at psacard.com → sign in → Public API.</p>
+  <p class="help"><b>PSA:</b> with a PSA API key, PSA cert numbers are looked up instantly (with population). Get one at psacard.com → sign in → Public API.
+    PSA allows <b>100 calls a day</b>: a new cert uses 2 (details + population), a cert looked up before uses none, and slab photos use 1 when you ask for them.
+    If the limit is reached, lookups use PSA's cert page until it resets.</p>
   <div class="row"><span class="name">PSA API key</span><input type="password" id="psaApiKey" placeholder="paste the access token" autocomplete="off"></div>
   <div class="row"><span class="name"></span><input type="text" id="psaTestCert" placeholder="a PSA cert number to test with" style="max-width:220px">
     <button class="ghost" id="testPsa" type="button">Test PSA key</button><span id="psaResult" class="muted"></span></div>

@@ -1,0 +1,116 @@
+{
+  "manifest_version": 3,
+  "name": "Graded Card Pricer",
+  "version": "3.4.0",
+  "description": "Spots graded Pokémon cards in emails and pages and shows recent sold prices from eBay, PriceCharting, 130point, Alt and Collectr.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "scripting",
+    "activeTab",
+    "contextMenus",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "Graded Card Pricer"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel.html"
+  },
+  "options_page": "src/options.html",
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Open Graded Card Pricer"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/detect.js",
+        "src/content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.ebay.ca/sch/*",
+        "*://*.ebay.com/sch/*"
+      ],
+      "js": [
+        "src/detect.js",
+        "src/platforms.js",
+        "src/ebay-reader.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.psacard.com/cert/*",
+        "*://*.cgccards.com/certlookup/*"
+      ],
+      "js": [
+        "src/detect.js",
+        "src/cert-reader.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://130point.com/sales*",
+        "*://*.130point.com/sales*"
+      ],
+      "js": [
+        "src/detect.js",
+        "src/platforms.js",
+        "src/point130-reader.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.alt.xyz/*",
+        "*://alt.xyz/*",
+        "*://*.getcollectr.com/*"
+      ],
+      "js": [
+        "src/mobile-shim.js"
+      ],
+      "world": "MAIN",
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.alt.xyz/*",
+        "*://alt.xyz/*",
+        "*://*.getcollectr.com/*",
+        "*://*.cardladder.com/*",
+        "*://cardladder.com/*"
+      ],
+      "js": [
+        "src/detect.js",
+        "src/frame-scraper.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}

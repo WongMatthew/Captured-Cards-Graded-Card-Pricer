@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Graded Card Pricer · Settings</title>
+  <link rel="stylesheet" href="sidepanel.css">
+  <style>
+    body { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+    h1 { font-size: 18px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 24px; }
+    .row { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .row input[type=text] { flex: 1; min-width: 0; height: 30px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; background: var(--panel); color: var(--text); font: 12px ui-monospace, monospace; }
+    .row .name { width: 110px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+    #saved { color: var(--up); margin-left: 10px; }
+    p.help { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <h1>Graded Card Pricer · Settings</h1>
+  <h2>Behavior</h2>
+  <label class="row"><input type="checkbox" id="pokemonOnly"> Only detect Pokémon cards (skip sports and other graded cards)</label>
+  <label class="row"><input type="checkbox" id="trimOutliers"> Trim outliers (mislabeled listings) from averages by default</label>
+  <label class="row"><input type="checkbox" id="excludeBestOffers"> Leave eBay “best offer accepted” sales out of averages unless 130point shows the real price</label>
+  <label class="row"><input type="checkbox" id="autoCollectr"> Load Collectr’s public price with every search (when no Collectr window is connected)</label>
+  <label class="row"><input type="checkbox" id="autoScan"> Keep scanning pages in the background and show a badge count (off = scan when the panel opens and when you press Scan)</label>
+
+  <h2>Currency</h2>
+  <p class="help">All prices are shown in Canadian dollars. eBay is searched on <b>eBay.ca</b>. Collectr, Alt and Card Ladder show CAD if you set CAD in
+    your account there. The extension also switches Collectr’s currency menu to CAD. Prices that still come through in US$ (PriceCharting, most of
+    130point) are converted at the Bank of Canada daily rate and marked “≈”.</p>
+  <label class="row"><input type="checkbox" id="includeConverted"> Include converted US$ sales in averages (off = Canadian-dollar prices only)</label>
+  <div class="row"><span class="name">eBay.ca sellers</span>
+    <select id="ebayLocation"><option value="all">All sellers (eBay.ca default, prices in CAD)</option><option value="canada">Canada-only sellers</option></select></div>
+
+  <h2>API keys <span class="muted" style="text-transform:none;letter-spacing:0">(stored on this computer only)</span></h2>
+  <p class="help"><b>eBay:</b> with an eBay developer key approved for the <em>Marketplace Insights</em> (sold items) API, eBay.ca sales load directly,
+    with exact sale times and no “Open sold results” step. Create keys at developer.ebay.com → Application Keys (Production), then request
+    Marketplace Insights access. eBay approves this API case by case. Until then the extension uses the eBay.ca website.</p>
+  <div class="row"><span class="name">eBay App ID</span><input type="text" id="ebayAppId" placeholder="Client ID" autocomplete="off" spellcheck="false"></div>
+  <div class="row"><span class="name">eBay Cert ID</span><input type="password" id="ebayCertId" placeholder="Client Secret" autocomplete="off"></div>
+  <div class="row"><span class="name"></span><button class="ghost" id="testEbay" type="button">Test eBay key</button><span id="ebayResult" class="muted"></span></div>
+  <p class="help"><b>PSA:</b> with a PSA API key, PSA cert numbers are looked up instantly (with population). Get one at psacard.com → sign in → Public API.</p>
+  <div class="row"><span class="name">PSA API key</span><input type="password" id="psaApiKey" placeholder="paste the access token" autocomplete="off"></div>
+  <div class="row"><span class="name"></span><input type="text" id="psaTestCert" placeholder="a PSA cert number to test with" style="max-width:220px">
+    <button class="ghost" id="testPsa" type="button">Test PSA key</button><span id="psaResult" class="muted"></span></div>
+
+  <h2>Platforms</h2>
+  <p class="help"><code>{q}</code> is replaced with the search text. Alt and Collectr have no public price API. They open as phone-sized mini views (or a 📱 phone window where you’re signed in), and the extension reads the sold data from the page. Alt, Collectr and Card Ladder need your login: connect each one from the panel (📱 Connect) and sign in once. If a site changes its search URL, update it here.</p>
+  <div id="platforms"></div>
+  <p><button class="primary" id="save" style="height:32px">Save</button><span id="saved"></span>
+     <button class="ghost" id="reset" style="margin-left:10px">Reset to defaults</button>
+     <button class="ghost" id="clear" style="margin-left:6px">Clear price cache</button></p>
+  <script src="detect.js"></script>
+  <script src="platforms.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

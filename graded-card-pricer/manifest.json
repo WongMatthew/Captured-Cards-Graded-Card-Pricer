@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Graded Card Pricer",
-  "version": "5.2.0",
+  "version": "5.3.0",
   "description": "Spots graded Pokémon cards and cert numbers in emails and pages and shows recent sold prices in CAD from eBay.ca, Terapeak, PriceCharting, SNKRDUNK, Pokemon Price Tracker, Card Ladder and Alt.",
   "minimum_chrome_version": "116",
   "permissions": [

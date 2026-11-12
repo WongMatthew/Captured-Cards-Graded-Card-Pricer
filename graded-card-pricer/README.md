@@ -1,4 +1,4 @@
-# Graded Card Pricer (Chrome extension) · v5.2
+# Graded Card Pricer (Chrome extension) · v5.3
 
 Reads the email or page you have open, finds graded Pokémon cards ("Umbreon VMAX 215/203 PSA 10",
 "Charizard Base Set 4/102 BGS 9.5", PSA slab text like "#215 UMBREON VMAX GEM MT 10"), and shows recent **sold**
@@ -51,7 +51,7 @@ prices from eBay.ca, Terapeak, PriceCharting, SNKRDUNK, Pokemon Price Tracker, C
 - **Summary:**
   - Today, 3-day, 5-day and 7-day averages.
   - Last sale, plus the average and low–high of the **last 10 sales**, so thinly traded cards still get a price.
-  - 30-day average, a 90-day trend line, and every sale listed newest first.
+  - 30-day average, a 90-day trend line (hover for a day; **drag across it to see the average, median, range and number of sales for that period**), and every sale listed newest first.
 
 | Source | What's read | Needs |
 |---|---|---|

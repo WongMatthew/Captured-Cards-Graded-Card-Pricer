@@ -1037,22 +1037,64 @@ function drawChart() {
   out += `<line class="cursor" id="cursor" x1="0" x2="0" y1="${padT}" y2="${H - padB}" visibility="hidden"/>`;
   svg.innerHTML = out;
 
-  // Hover: nearest day → tooltip with that day's average and sale count.
-  svg.onmousemove = (e) => {
+  // Hover: one day. Drag (mouse or touch): a period, with its average, median, range and number of sales.
+  out = '';
+  svg.insertAdjacentHTML('beforeend', `<rect class="sel" id="sel" x="0" y="${padT}" width="0" height="${H - padT - padB}" visibility="hidden"/>`);
+  const sel = svg.querySelector('#sel');
+  const cur = svg.querySelector('#cursor');
+  const toX = (e) => { const rect = svg.getBoundingClientRect(); return Math.max(padL, Math.min(W - padR, (e.clientX - rect.left) * (W / rect.width))); };
+  const daysAt = (vx) => span - (vx - padL) / (W - padL - padR) * span; // x → days ago
+  const placeTip = (vx) => {
     const rect = svg.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * (W / rect.width);
-    let best = daily[0];
-    for (const p of daily) if (Math.abs(x(p.d) - mx) < Math.abs(x(best.d) - mx)) best = p;
-    const cur = svg.querySelector('#cursor');
-    cur.setAttribute('x1', x(best.d)); cur.setAttribute('x2', x(best.d)); cur.setAttribute('visibility', 'visible');
-    const dt = best.list[0].date;
-    tip.innerHTML = `${shortDate(dt)} · <b>${money(best.avg)}</b> avg · ${best.list.length} sale${best.list.length > 1 ? 's' : ''}` +
-      (best.list.length > 1 ? ` (${money(Math.min(...best.list.map(s => s.price)), true)}–${money(Math.max(...best.list.map(s => s.price)), true)})` : '');
     tip.hidden = false;
-    const px = x(best.d) / W * rect.width;
+    const px = vx / W * rect.width;
     tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, px - tip.offsetWidth / 2)) + 'px';
   };
-  svg.onmouseleave = () => { tip.hidden = true; const c = svg.querySelector('#cursor'); if (c) c.setAttribute('visibility', 'hidden'); };
+  const showDay = (vx) => {
+    let best = daily[0];
+    for (const p of daily) if (Math.abs(x(p.d) - vx) < Math.abs(x(best.d) - vx)) best = p;
+    cur.setAttribute('x1', x(best.d)); cur.setAttribute('x2', x(best.d)); cur.setAttribute('visibility', 'visible');
+    tip.innerHTML = `${shortDate(best.list[0].date)} · <b>${money(best.avg)}</b> avg · ${best.list.length} sale${best.list.length > 1 ? 's' : ''}` +
+      (best.list.length > 1 ? ` (${money(Math.min(...best.list.map(s => s.price)), true)}–${money(Math.max(...best.list.map(s => s.price)), true)})` : '');
+    placeTip(x(best.d));
+  };
+  const showRange = (x0, x1) => {
+    const a = Math.min(x0, x1), b = Math.max(x0, x1);
+    sel.setAttribute('x', a); sel.setAttribute('width', Math.max(1, b - a)); sel.setAttribute('visibility', 'visible');
+    cur.setAttribute('visibility', 'hidden');
+    const newest = Math.max(0, Math.floor(daysAt(b))), oldest = Math.ceil(daysAt(a));
+    const inRange = sales.filter(s => { const d = GCP.daysAgo(s.date, now); return d >= newest && d <= oldest; });
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - oldest);
+    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() - newest);
+    const st = GCP.stats(inRange.map(s => s.price));
+    tip.innerHTML = `${shortDate(from)} – ${shortDate(to)} · ` + (st
+      ? `<b>${money(st.avg)}</b> avg · ${st.count} sale${st.count > 1 ? 's' : ''} · median ${money(st.median)} · ${money(st.low, true)}–${money(st.high, true)}`
+      : 'no sales in this period');
+    placeTip((a + b) / 2);
+  };
+  let dragFrom = null, dragged = false, pinned = false;
+  svg.style.touchAction = 'none';
+  svg.onpointerdown = (e) => {
+    dragFrom = toX(e); dragged = false; pinned = false;
+    sel.setAttribute('visibility', 'hidden');
+    svg.setPointerCapture(e.pointerId);
+  };
+  svg.onpointermove = (e) => {
+    const vx = toX(e);
+    if (dragFrom != null && Math.abs(vx - dragFrom) > 3) { dragged = true; showRange(dragFrom, vx); return; }
+    if (dragFrom == null && !pinned) showDay(vx);
+  };
+  svg.onpointerup = (e) => {
+    if (dragFrom == null) return;
+    if (dragged) pinned = true;            // keep the period on screen
+    else { sel.setAttribute('visibility', 'hidden'); showDay(toX(e)); }
+    dragFrom = null;
+  };
+  svg.onpointerleave = () => {
+    if (pinned || dragFrom != null) return;
+    tip.hidden = true;
+    cur.setAttribute('visibility', 'hidden');
+  };
 
   const first = daily[0], lastD = daily[daily.length - 1];
   const change = daily.length > 1 ? (lastD.avg - first.avg) / first.avg * 100 : null;

@@ -12,7 +12,7 @@ const CACHE_VER = 'v4';
 const CACHE_MS = 15 * 60 * 1000;
 const EMBED_WAIT_MS = 45000;
 const MOBILE_W = 390;
-const ORDER = ['ebay', 'ppt', '130point', 'terapeak', 'pricecharting', 'snkrdunk', 'cardladder', 'alt', 'collectr'];
+const ORDER = ['ebay', 'ppt', '130point', 'terapeak', 'pricecharting', 'snkrdunk', 'cardladder', 'alt'];
 const COMMON_GRADES = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS Black Label 10', 'BGS 10', 'BGS 9.5', 'BGS 9', 'CGC Pristine 10', 'CGC 10', 'CGC 9.5', 'CGC 9', 'SGC 10', 'TAG 10'];
 const GRADE_BAR = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS 10', 'BGS 9.5', 'BGS 9', 'CGC Pristine 10', 'CGC 10', 'CGC 9.5', 'SGC 10', 'TAG 10'];
 
@@ -37,15 +37,13 @@ async function loadSettings() {
   const s = await chrome.storage.sync.get(null);
   settings = structuredClone(P.DEFAULTS);
   for (const k of Object.keys(P.DEFAULTS)) if (k !== 'platforms' && k in s) settings[k] = s[k];
+  if (Array.isArray(s.offerPcts)) settings.offerPcts = s.offerPcts;
   if (s.platforms) for (const id of Object.keys(settings.platforms)) Object.assign(settings.platforms[id], s.platforms[id] || {});
   P.migrateSettings(settings);
-  // Every sale counts: best offers included, nothing trimmed, everything converted to CAD.
-  settings.excludeBestOffers = false;
-  settings.includeConverted = true;
   secrets = await chrome.storage.local.get(P.SECRET_KEYS);
-  // Search pages learned from your own searches in signed-in windows (Card Ladder, Alt, Collectr, Terapeak).
+  // Search pages learned from your own searches in signed-in windows (Card Ladder, Alt).
   const { learnedUrls = {} } = await chrome.storage.local.get('learnedUrls');
-  for (const [id, t] of Object.entries(learnedUrls)) if (settings.platforms[id] && t.includes('{q}')) settings.platforms[id].url = t;
+  for (const [id, t] of Object.entries(learnedUrls)) if (settings.platforms[id] && id !== 'terapeak' && t.includes('{q}')) settings.platforms[id].url = t;
   settings.psaApiKey = secrets.psaApiKey || '';
 }
 async function refreshConnected() {
@@ -58,7 +56,6 @@ async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
-const isMarketplace = (url) => /(^|\.)(ebay\.com|pricecharting\.com|130point\.com|alt\.xyz|getcollectr\.com|psacard\.com|cgccards\.com)$/.test(safeHost(url));
 function safeHost(url) { try { return new URL(url).hostname; } catch (e) { return ''; } }
 
 async function scanTab({ initial = false } = {}) {
@@ -217,7 +214,6 @@ async function search(q, opts = {}) {
     if (!embed) runFetch(id, cfg, opts.force);
     else if (id === 'snkrdunk') loadSnkrdunk();
     else if (connected.includes(id)) followInWindow(id);
-    else if (id === 'collectr' && settings.autoCollectr) loadEmbed(id, { quiet: true });
     renderSource(id);
   }
   aggregate();
@@ -292,7 +288,6 @@ function classify(id) {
     const s = inCAD(raw, id);
     if (!s) { r.rejected.push({ ...raw, key, reason: 'no exchange rate', platform: id }); continue; }
     let reason = forced.has(key) ? null : reasonFor(s);
-    if (!reason && s.converted && !settings.includeConverted) reason = `${s.orig.cur} price (converted sources off)`;
     (reason ? r.rejected : r.sales).push({ ...s, key, reason, platform: id });
   }
   r.sales.sort((a, b) => b.date - a.date);
@@ -336,9 +331,7 @@ function buildSource(id) {
     node.classList.toggle('off', !e.target.checked);
     aggregate();
   };
-  node.querySelector('.live').onclick = () => setMini(id, node.querySelector('.mini').hidden);
   if (meta.mode === 'embed') {
-    node.querySelector('.live').hidden = true;
     const load = node.querySelector('.load');
     load.hidden = false;
     load.onclick = () => (id === 'snkrdunk' ? loadSnkrdunk() : loadEmbed(id));
@@ -352,7 +345,7 @@ function buildSource(id) {
       refreshConnected();
     };
     if (id === 'snkrdunk') ph.hidden = true; // public site: no login window needed
-    if (id !== 'collectr' && id !== 'snkrdunk') node.querySelector('.load').hidden = true; // Alt / Card Ladder show nothing useful signed out
+    if (id !== 'snkrdunk') node.querySelector('.load').hidden = true; // Alt / Card Ladder show nothing useful signed out
   }
   return node;
 }
@@ -426,8 +419,7 @@ function renderSource(id) {
   } else if (r.status === 'idle' && id === 'snkrdunk') {
     noteText = 'SNKRDUNK loads automatically with each search.';
   } else if (r.status === 'idle') {
-    noteText = `${P.META[id].name} needs your login. Press “📱 Connect”, sign in once in the window that opens, and it will follow every search.` +
-      (id === 'collectr' ? ' (“Load here” shows the public price without your account.)' : '');
+    noteText = `${P.META[id].name} needs your login. Press “📱 Connect”, sign in once in the window that opens, and it will follow every search.`;
   }
   if (connected.includes(id) && r.status !== 'error') noteText = (noteText ? noteText + ' ' : '') + 'Connected: follows your searches in its own window.';
   note.hidden = !noteText;
@@ -471,7 +463,8 @@ function renderSource(id) {
 
 // ---------------------------------------------------------------- embedded mobile views (on request)
 function frameUrl(id) {
-  return state.src[id].url + '#gcp=' + encodeURIComponent(JSON.stringify({ q: state.query, sid: state.sid }));
+  const u = state.src[id].url;
+  return u + '#gcp=' + encodeURIComponent(JSON.stringify({ q: state.query, sid: state.sid, u }));
 }
 // SNKRDUNK: pick the exact product from its (plain HTML) search, then read that product's sales history page.
 async function loadSnkrdunk() {
@@ -536,7 +529,6 @@ function setMini(id, on, reload) {
   const mini = node.querySelector('.mini');
   const frame = mini.querySelector('iframe');
   mini.hidden = !on;
-  node.querySelector('.live').textContent = on ? 'Hide view' : 'Mini view';
   if (!on) return;
   const url = P.META[id].mode === 'embed' ? frameUrl(id) : state.src[id].url;
   if (reload || frame.dataset.src !== url) { frame.dataset.src = url; frame.src = url; }
@@ -693,10 +685,8 @@ function aggregate() {
   if (!state.parts) return;
   const now = new Date();
   const all = mergedAll();
-  const trim = false;
   let week = all.filter(s => GCP.inWindow(s, 7, now));
   const before = week.length;
-  if (trim) week = GCP.trimOutliers(week);
   const w = GCP.windowStats(week, now);
   state.all = all; state.merged = week; state.week = w;
   const busy = loadingSources() > 0;
@@ -725,10 +715,11 @@ function aggregate() {
 
   // key stats: last sale, 7-day low / high, 30-day average
   const month = all.filter(s => GCP.inWindow(s, 30, now));
-  const m30 = GCP.stats((trim ? GCP.trimOutliers(month) : month).map(s => s.price));
+  const m30 = GCP.stats(month.map(s => s.price));
   // The most recent sales give a price even when a card hasn't sold this week.
   const recent = all.slice(0, 10);
   const r10 = GCP.stats(recent.map(s => s.price));
+  state.value = r10 ? { avg: r10.avg, n: recent.length } : null;
   const lo = recent.length ? recent.reduce((a, b) => (b.price < a.price ? b : a)) : null;
   const hi = recent.length ? recent.reduce((a, b) => (b.price > a.price ? b : a)) : null;
   const last = all[0];
@@ -750,7 +741,7 @@ function aggregate() {
     rejected ? `${rejected} other listings filtered out` : '',
     state.dupesMerged ? `${state.dupesMerged} duplicate${state.dupesMerged > 1 ? 's' : ''} merged (same sale on several sites)` : '',
     state.allow.length ? `treated as ${state.allow.join(', ')} card` : '',
-    pendingEmbeds ? 'loading Alt/Collectr…' : ''
+    pendingEmbeds ? 'loading signed-in sources…' : ''
   ].filter(Boolean).join(' · ');
 
   renderRecent(all, busy);
@@ -763,44 +754,21 @@ function aggregate() {
   maybeSnapshot();
 }
 
-// Accepted best offers: same card and grade, but eBay hides the real price. Shown in date order, never averaged.
-function bestOfferSales(counted) {
-  const have = new Set(counted.map(s => s.key));
-  const out = new Map();
-  for (const r of Object.values(state.src)) {
-    if (!r.include) continue;
-    for (const s of r.rejected) if (/^best offer/.test(s.reason) && !have.has(s.key) && !out.has(s.key)) out.set(s.key, { ...s, offer: true, sources: [r.id] });
-  }
-  return [...out.values()];
-}
-
 function renderRecent(all, busy) {
   const ol = $('#recent');
   ol.innerHTML = '';
-  const offers = bestOfferSales(all);
   // Newest first; same-day sales keep the marketplace's own order (most recently ended first).
-  const rows = [...all, ...offers].sort((a, b) => b.date - a.date);
   const SHOW = 10;
-  const n = showAllSales ? 80 : SHOW;
-  $('#salesCount').textContent = all.length ? `${all.length} matching sale${all.length > 1 ? 's' : ''}${offers.length ? ` + ${offers.length} best offer${offers.length > 1 ? 's' : ''}` : ''}` : '';
-  if (!rows.length) {
+  $('#salesCount').textContent = all.length ? `${all.length} matching sale${all.length > 1 ? 's' : ''}` : '';
+  if (!all.length) {
     const li = document.createElement('li');
     li.innerHTML = `<span class="empty-row">${busy ? 'Loading sales…' : 'No matching sales found. Open a source below to see what was filtered out.'}</span>`;
     ol.appendChild(li);
   }
-  for (const s of rows.slice(0, n)) {
-    const li = saleLi(s, true);
-    if (s.offer) {
-      li.classList.add('offer');
-      li.querySelector('.d').textContent += ' · best offer accepted: real price hidden, not in average';
-      li.querySelector('.p').title = 'Listed price. The accepted offer was lower and eBay doesn’t show it. Tick “Count eBay best-offer list prices” to include these, or check 130point.';
-      li.querySelector('.p').onclick = null;
-    }
-    ol.appendChild(li);
-  }
+  for (const s of all.slice(0, showAllSales ? 80 : SHOW)) ol.appendChild(saleLi(s, true));
   const more = $('#moreSales');
-  more.hidden = rows.length <= SHOW;
-  more.textContent = showAllSales ? 'Show fewer' : `Show ${Math.min(rows.length, 80) - SHOW} more`;
+  more.hidden = all.length <= SHOW;
+  more.textContent = showAllSales ? 'Show fewer' : `Show ${Math.min(all.length, 80) - SHOW} more`;
 }
 $('#moreSales').onclick = () => { showAllSales = !showAllSales; renderRecent(state.all, false); };
 
@@ -815,7 +783,7 @@ const gradeName = (grader, g) => g === 'BL' ? (grader === 'BGS' ? 'Black Label' 
 function populations() {
   const cands = [];
   if (state.cert && state.cert.specPop) cands.push({ ...state.cert.specPop, rank: 3 });
-  for (const id of ['pricecharting', 'alt', 'cardladder', 'collectr']) {
+  for (const id of ['pricecharting', 'alt', 'cardladder']) {
     const r = state.src[id];
     if (r && r.pop) cands.push({ ...r.pop, rank: 1 });
   }
@@ -915,8 +883,6 @@ function renderRefs() {
   const refs = [];
   const pp = state.src.ppt;
   if (pp && pp.summary) { const x = pptCad(pp.summary); if (x.value) refs.push(`<b>Pokemon Price Tracker</b> ${esc(x.text)}`); }
-  const co = state.src.collectr;
-  if (co && co.marketPrice != null) refs.push(`<b>Collectr</b> market ${money(co.marketPrice)}`);
   const cl = state.src.cardladder;
   if (cl && cl.marketPrice != null) refs.push(`<b>Card Ladder</b> value ${money(cl.marketPrice)}`);
   const al = state.src.alt;
@@ -992,26 +958,38 @@ $('#moreAsks').onclick = () => { showAllAsks = !showAllAsks; renderAsks(); };
 
 // ================================================================ deal check
 function askValue() { return parseFloat(String($('#ask').value).replace(/[$,\s]/g, '').replace(/k$/i, '000')) || null; }
+// Offer guide: your usual offer percentages (default 70% and 80%) of the card's value = average of the last 10 sales.
+function offerPcts() {
+  const p = (settings.offerPcts || [70, 80]).map(Number).filter(n => n > 0 && n <= 200);
+  return p.length ? p : [70, 80];
+}
 function renderDeal() {
-  const v = askValue();
+  const v = state.value;
+  const box = $('#offers');
+  box.innerHTML = '';
+  $('#offerBase').textContent = v ? `of ${money(v.avg)} (avg of last ${v.n} sales)` : '';
+  for (const pct of offerPcts()) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'offer-chip';
+    b.disabled = !v;
+    b.innerHTML = `<span>${pct}%</span><b>${v ? money(v.avg * pct / 100) : '—'}</b>`;
+    b.title = 'Use this as your offer';
+    b.onclick = () => { $('#ask').value = String(Math.round(v.avg * pct / 100)); renderDeal(); drawChart(); };
+    box.appendChild(b);
+  }
+  const ask = askValue();
   const out = $('#dealVerdict');
   out.className = 'verdict muted';
-  if (!v) { out.textContent = 'Compare a price with recent sales'; return; }
-  const ref = state.week && state.week['7d'];
-  if (!ref) { out.textContent = 'No sales this week to compare with'; return; }
-  const pct = (v - ref.avg) / ref.avg * 100;
+  if (!ask) { out.textContent = 'Type an asking price or offer to compare'; return; }
+  if (!v) { out.textContent = 'No sales yet to compare with'; return; }
+  const pct = (ask - v.avg) / v.avg * 100;
   out.className = 'verdict ' + (pct <= -3 ? 'good' : pct >= 5 ? 'bad' : 'fair');
-  out.textContent = `${Math.abs(pct) < 3 ? 'About market' : pct < 0 ? `${Math.abs(pct).toFixed(1)}% below` : `${pct.toFixed(1)}% above`} 7D avg ${money(ref.avg)} · range ${money(ref.low, true)}–${money(ref.high, true)}`;
+  out.textContent = `${(ask / v.avg * 100).toFixed(0)}% of value · ${Math.abs(pct) < 3 ? 'about market' : pct < 0 ? `${Math.abs(pct).toFixed(1)}% below` : `${pct.toFixed(1)}% above`} the last-10 average`;
   out.title = out.textContent;
 }
 
 // ================================================================ trend chart
-document.querySelectorAll('#rangeSeg button').forEach(b => (b.onclick = () => {
-  rangeDays = +b.dataset.days;
-  document.querySelectorAll('#rangeSeg button').forEach(x => x.classList.toggle('on', x === b));
-  drawChart();
-}));
-
 function drawChart() {
   const svg = $('#chart');
   const tip = $('#tip');
@@ -1114,11 +1092,11 @@ function renderGradesTable() {
       seen.add(key);
       const label = [...uniq][0];
       const c = inCAD(s, id);
-      if (!c || (c.converted && !settings.includeConverted)) continue;
+      if (!c) continue;
       (byGrade[label] = byGrade[label] || []).push(c);
     }
   }
-  const cp = (state.src.collectr && state.src.collectr.gradePrices) || {};
+  const cp = {};
   const gradeNum = (g) => parseFloat(g.match(/[\d.]+$/)[0]) + (/Black|Pristine/.test(g) ? 0.6 : 0);
   const extra = Object.keys(byGrade).filter(g => !COMMON_GRADES.includes(g) && byGrade[g].length >= 3 && gradeNum(g) >= 7).sort((a, b) => gradeNum(b) - gradeNum(a));
   const labels = [...COMMON_GRADES.filter(g => byGrade[g] || cp[g]), ...extra].slice(0, 10);
@@ -1132,7 +1110,7 @@ function renderGradesTable() {
     const st = GCP.stats(list.map(s => s.price));
     const tr = document.createElement('tr');
     if (g === cur) tr.className = 'cur';
-    tr.innerHTML = `<td>${esc(g)}</td><td>${st ? money(st.avg) : '—'}</td><td>${list.length || '—'}</td><td>${list[0] ? money(list[0].price) : '—'}</td><td>${cp[g] ? money(cp[g], true) : '—'}</td>`;
+    tr.innerHTML = `<td>${esc(g)}</td><td>${st ? money(st.avg) : '—'}</td><td>${list.length || '—'}</td><td>${list[0] ? money(list[0].price) : '—'}</td>`;
     tr.onclick = () => switchGrade(g);
     tbody.appendChild(tr);
   }
@@ -1206,8 +1184,6 @@ $('#copyBtn').onclick = async () => {
     lines.push(`${win.label}: ${s ? `${money(s.avg)} avg (${s.count} sale${s.count > 1 ? 's' : ''}, ${money(s.low)}–${money(s.high)})` : 'no sales'}`);
   }
   if (state.all[0]) lines.push(`Last sale: ${money(state.all[0].price)} on ${shortDate(state.all[0].date)}`);
-  const cp = state.src.collectr && state.src.collectr.marketPrice;
-  if (cp) lines.push(`Collectr ${GCP.gradeLabel(state.parts)} market: ${money(cp)}`);
   if (state.cert) lines.push(`${state.cert.grader} cert #${state.cert.cert}`);
   const srcs = [...new Set(state.merged.flatMap(s => s.sources))].map(id => P.META[id].name);
   if (srcs.length) lines.push(`Sources: ${srcs.join(', ')}`);

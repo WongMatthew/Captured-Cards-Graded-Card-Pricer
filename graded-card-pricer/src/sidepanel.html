@@ -60,10 +60,14 @@
       <div class="keystats" id="keystats"></div>
       <div class="refs small" id="refs" hidden></div>
 
-      <div class="deal">
-        <label for="ask">Asking / offer</label>
-        <span class="dollar">$</span><input id="ask" type="text" inputmode="decimal" placeholder="—">
-        <span id="dealVerdict" class="verdict muted">Compare a price with recent sales</span>
+      <div class="block offer">
+        <div class="block-head"><span>Offer guide</span><span id="offerBase" class="muted small"></span></div>
+        <div class="offer-row" id="offers"></div>
+        <div class="deal">
+          <label for="ask">Asking / offer</label>
+          <span class="dollar">$</span><input id="ask" type="text" inputmode="decimal" placeholder="—">
+        </div>
+        <div id="dealVerdict" class="verdict muted"></div>
       </div>
 
       <div class="block">
@@ -100,7 +104,7 @@
 
       <details class="grades" id="gradesBox" hidden>
         <summary>Other grades of this card <span class="muted">(30 days)</span></summary>
-        <table id="gradesTable"><thead><tr><th>Grade</th><th>Avg</th><th>Sales</th><th>Last</th><th>Collectr</th></tr></thead><tbody></tbody></table>
+        <table id="gradesTable"><thead><tr><th>Grade</th><th>Avg</th><th>Sales</th><th>Last</th></tr></thead><tbody></tbody></table>
       </details>
     </section>
 
@@ -128,7 +132,6 @@
         <div class="src-actions">
           <label class="toggle small"><input type="checkbox" class="include" checked> In average</label>
           <button class="ghost load" type="button" hidden>Load here</button>
-          <button class="ghost live" type="button">Mini view</button>
           <button class="ghost phone" type="button" hidden title="Phone-sized window of the website, signed in as you">📱 Phone</button>
           <a class="open" target="_blank" rel="noopener">Open ↗</a>
         </div>

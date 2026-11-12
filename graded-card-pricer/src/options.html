@@ -18,12 +18,15 @@
   <h1>Graded Card Pricer · Settings</h1>
   <h2>Behavior</h2>
   <label class="row"><input type="checkbox" id="pokemonOnly"> Only detect Pokémon cards (skip sports and other graded cards)</label>
-  <label class="row"><input type="checkbox" id="autoCollectr"> Load Collectr’s public price with every search (when no Collectr window is connected)</label>
   <label class="row"><input type="checkbox" id="autoScan"> Keep scanning pages in the background and show a badge count (off = scan when the panel opens and when you press Scan)</label>
 
+  <h2>Offer guide</h2>
+  <p class="help">Offers shown under the price, as a percentage of the card's value (average of the last 10 sales).</p>
+  <div class="row"><span class="name">Offer %</span><input type="text" id="offerPcts" placeholder="70, 80" style="max-width:160px"></div>
+
   <h2>Currency</h2>
-  <p class="help">All prices are shown in Canadian dollars. eBay is searched on <b>eBay.ca</b>. Collectr, Alt and Card Ladder show CAD if you set CAD in
-    your account there. The extension also switches Collectr’s currency menu to CAD. Prices in other currencies (PriceCharting and 130point in US$, SNKRDUNK in ¥) are
+  <p class="help">All prices are shown in Canadian dollars. eBay is searched on <b>eBay.ca</b>. Alt and Card Ladder show CAD if you set CAD in
+    your account there. Prices in other currencies (PriceCharting and 130point in US$, SNKRDUNK in ¥) are
     converted at the Bank of Canada daily rate and marked “≈”. Every matching sale counts, best offers included.</p>
   <div class="row"><span class="name">eBay.ca sellers</span>
     <select id="ebayLocation"><option value="all">All sellers (eBay.ca default, prices in CAD)</option><option value="canada">Canada-only sellers</option></select></div>
@@ -48,7 +51,7 @@
     <button class="ghost" id="testPsa" type="button">Test PSA key</button><span id="psaResult" class="muted"></span></div>
 
   <h2>Platforms</h2>
-  <p class="help"><code>{q}</code> is replaced with the search text. Alt and Collectr have no public price API. They open as phone-sized mini views (or a 📱 phone window where you’re signed in), and the extension reads the sold data from the page. Alt, Collectr and Card Ladder need your login: connect each one from the panel (📱 Connect) and sign in once. If a site changes its search URL, update it here.</p>
+  <p class="help"><code>{q}</code> is replaced with the search text. Alt and Card Ladder have no public API: connect them from the panel (📱 Connect) and sign in once; they follow every search. If a site changes its search URL, update it here.</p>
   <div id="platforms"></div>
   <p><button class="primary" id="save" style="height:32px">Save</button><span id="saved"></span>
      <button class="ghost" id="reset" style="margin-left:10px">Reset to defaults</button>

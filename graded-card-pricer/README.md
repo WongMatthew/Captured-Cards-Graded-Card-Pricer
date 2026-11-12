@@ -1,8 +1,8 @@
-# Graded Card Pricer (Chrome extension) · v4.6
+# Graded Card Pricer (Chrome extension) · v5.1
 
 Reads the email or page you have open, finds graded Pokémon cards ("Umbreon VMAX 215/203 PSA 10",
 "Charizard Base Set 4/102 BGS 9.5", PSA slab text like "#215 UMBREON VMAX GEM MT 10"), and shows recent **sold**
-prices from eBay, PriceCharting, 130point, Alt and Collectr in one side panel.
+prices from eBay.ca, Terapeak, 130point, PriceCharting, SNKRDUNK, Pokemon Price Tracker, Card Ladder and Alt in one side panel.
 
 ## What you get
 
@@ -56,12 +56,12 @@ prices from eBay, PriceCharting, 130point, Alt and Collectr in one side panel.
 | Source | What's read | Needs |
 |---|---|---|
 | eBay.ca | Sold listings (up to 3 pages) | Nothing |
-| **Terapeak** | eBay's own research tool (Seller Hub → Research): sold listings with actual prices, incl. accepted best offers | Sign in to eBay in its 📱 window once (Terapeak is free in Seller Hub) |
+| **Terapeak** | eBay.com research tool (Seller Hub → Research), searched with exactly the words you typed: sold listings with actual prices, incl. accepted best offers (US$ → CAD) | Sign in to eBay in its 📱 window once (Terapeak is free in Seller Hub) |
 | **Pokemon Price Tracker** (API key) | eBay graded-sales database. Business plan: every sold listing, which joins your sales. Other paid plans: a per-grade summary (smart price, median, 7-day price, trend) shown as a reference. Uses the 1st Edition pool when you search 1st Edition. | API key in Settings |
 | 130point | eBay + auction-house sales, incl. real best-offer prices | Nothing |
 | PriceCharting | The exact product page (e.g. the 1st Edition version) and its graded sales | Nothing |
 | **SNKRDUNK** | Japan's largest card marketplace: sales history per grade (PSA 10/9, BGS 9.5/10/Black Label), ¥ → CAD | Nothing |
-| Card Ladder, Alt, Collectr | Your signed-in sales history / market price | 📱 Connect once |
+| Card Ladder, Alt | Your signed-in sales history and value. Alt: sign in once in its window and it continues to the card, opens it, and reads its sold history (never listings or bids). | 📱 Connect once |
 
 ## Current listings (lowest asks)
 
@@ -75,6 +75,12 @@ Marketplace Insights, is closed to new apps, so the keys are used for listings o
 Type or scan a cert number. The extension tries **PSA's API** first (needs an approved key), then reads **PSA's cert page
 directly in the background**. Either way the card, its edition (Variety) and grade become the search. No tab opens.
 If PSA refuses both, the panel offers an "Open PSA cert page" button.
+
+## Offer guide
+
+Under the price: your usual offers as a percentage of the card's value (the average of the last 10 sales). The defaults
+are **70%** and **80%**; change them in Settings → Offer guide. Click one to put it in the Asking / offer box, which
+shows what percentage of value any price is.
 
 ## Card details & population
 
@@ -94,8 +100,8 @@ and names the source under the chart.
 
 ## Currency: everything in CAD
 
-eBay is searched on **eBay.ca**, so its prices are already in CAD. Collectr, Alt and Card Ladder show CAD when you set CAD
-in your account there; the extension also switches Collectr's currency menu to CAD and detects which currency each page
+eBay is searched on **eBay.ca**, so its prices are already in CAD. Alt and Card Ladder show CAD when you set CAD
+in your account there; the extension detects which currency each page
 is showing. Anything that still arrives in another currency (PriceCharting and most of 130point only show US$) is converted at the
 **Bank of Canada daily rate** and marked **≈ from USD …**. Untick *Include US$ sources (converted)* to use only native
 CAD prices.
@@ -109,7 +115,6 @@ CAD prices.
 | PriceCharting | Matching product, then its completed-sales tables | US$ (converted) unless your PriceCharting account is set to CAD. |
 | Card Ladder | Your signed-in Card Ladder sales history | **📱 Connect** once and sign in; the window then follows every search. |
 | Alt | Your signed-in Alt: opens the matching item and reads only rows marked as sold | **📱 Connect** once and sign in. Browse results are active listings and are never counted. |
-| Collectr | The matching product's price per grade | **📱 Connect** to use your paid account (phone-sized window); otherwise the public price loads quietly in the panel. |
 
 **Card Ladder (and other signed-in sources) set up once:**
 1. In the panel, open the **Card Ladder** row and press **📱 Connect**.
@@ -117,10 +122,10 @@ CAD prices.
 3. Search one card yourself in Card Ladder's **Sales History**. The extension learns that page from your search.
 
 From then on every search in the panel opens that page for the new card. Every sale row (date, price, title, marketplace)
-and Card Ladder's value are read into the panel in CAD, using the same exact-card and grade filtering. Alt, Collectr and
+and Card Ladder's value are read into the panel in CAD, using the same exact-card and grade filtering. Alt and
 Terapeak learn the same way.
 
-**Connected windows:** Alt, Collectr and Card Ladder need your login, and Chrome keeps logins out of embedded panels.
+**Connected windows:** Alt and Card Ladder need your login, and Chrome keeps logins out of embedded panels.
 Each gets one real phone-sized window. Sign in once, minimise it if you like, and it follows every new search.
 Closing the window disconnects it.
 

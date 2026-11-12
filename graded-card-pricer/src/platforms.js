@@ -7,11 +7,7 @@
   // Canadian version (PriceCharting, 130point, Alt) are converted at the Bank of Canada daily rate and marked "converted".
   const DEFAULTS = {
     autoScan: false,
-    trimOutliers: true,
     pokemonOnly: true,
-    excludeBestOffers: true,
-    includeConverted: true,
-    autoCollectr: true,
     autoAlt: false,
     ebayLocation: 'all',
     platforms: {
@@ -19,10 +15,9 @@
       pricecharting: { enabled: true, url: 'https://www.pricecharting.com/search-products?q={q}&type=prices' },
       '130point': { enabled: true, url: 'https://130point.com/sales/' },
       alt: { enabled: true, url: 'https://alt.xyz/browse?query={q}&category=POKEMON_CARDS' },
-      collectr: { enabled: true, url: 'https://app.getcollectr.com/?query={q}' },
       cardladder: { enabled: true, url: 'https://app.cardladder.com/sales-history?q={q}' },
       ppt: { enabled: true, url: 'https://www.pokemonpricetracker.com' },
-      terapeak: { enabled: true, url: 'https://www.ebay.ca/sh/research?marketplace=EBAY-CA&keywords={q}&dayRange=365&tabName=SOLD&limit=50&offset=0' },
+      terapeak: { enabled: true, url: 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords={q}&dayRange=365&tabName=SOLD&limit=50&offset=0' },
       snkrdunk: { enabled: true, url: 'https://snkrdunk.com/search?keywords={q}' }
     }
   };
@@ -30,6 +25,8 @@
   function migrateSettings(cfg) {
     const e = cfg.platforms && cfg.platforms.ebay;
     if (e && /\/\/www\.ebay\.com\//.test(e.url)) e.url = DEFAULTS.platforms.ebay.url;
+    const tp = cfg.platforms && cfg.platforms.terapeak;
+    if (tp && /ebay\.ca\/sh\/research/.test(tp.url)) tp.url = DEFAULTS.platforms.terapeak.url;
     return cfg;
   }
   // Secrets live in chrome.storage.local (this computer only), not in synced settings.
@@ -40,14 +37,13 @@
     pricecharting: { name: 'PriceCharting', short: 'PC', color: '#16a34a', mode: 'fetch', cur: 'USD', note: 'Completed sales by grade' },
     '130point': { name: '130point', short: '130', color: '#f59e0b', mode: 'fetch', cur: 'USD', note: 'eBay sales incl. real best-offer prices' },
     alt: { name: 'Alt', short: 'Alt', color: '#a855f7', mode: 'embed', cur: 'USD', note: 'Sold history (sign in to Alt)' },
-    collectr: { name: 'Collectr', short: 'Co', color: '#ec4899', mode: 'embed', cur: 'USD', note: 'Market price per grade (set Collectr to CAD)' },
     snkrdunk: { name: 'SNKRDUNK', short: 'SD', color: '#111827', mode: 'embed', cur: 'JPY', note: 'Japan marketplace sales history (¥ → CAD)' },
     ppt: { name: 'Pokemon Price Tracker', short: 'PPT', color: '#f97316', mode: 'fetch', cur: 'USD', note: 'eBay graded-sales database (API key)' },
-    terapeak: { name: 'Terapeak', short: 'TP', color: '#0064d2', mode: 'embed', cur: 'CAD', note: 'eBay’s own sold data, incl. accepted best offers (sign in to eBay)' },
+    terapeak: { name: 'Terapeak', short: 'TP', color: '#0064d2', mode: 'embed', cur: 'USD', note: 'eBay.com sold data, incl. accepted best offers (sign in to eBay)' },
     cardladder: { name: 'Card Ladder', short: 'CL', color: '#0ea5e9', mode: 'embed', cur: 'USD', note: 'Sales history (sign in to Card Ladder)' }
   };
   // Sources that need your own login: they're read from a real window you're signed into.
-  const LOGIN_SOURCES = ['terapeak', 'alt', 'collectr', 'cardladder'];
+  const LOGIN_SOURCES = ['terapeak', 'alt', 'cardladder'];
 
   // ---------------------------------------------------------------- exchange rates (Bank of Canada)
   const FX_SERIES = ['USD', 'GBP', 'EUR', 'AUD', 'JPY', 'NZD', 'HKD', 'SGD'];
@@ -119,18 +115,19 @@
   function numberForms(parts) {
     const k = parts.numberKey;
     if (!k) return [];
-    const full = /\//.test(parts.number || '') ? [parts.number.replace(/\s+/g, '')] : [];
-    if (!/^\d+$/.test(k)) return [k, ...full];
-    return [...new Set([k, k.padStart(3, '0'), ...full])];
+    const typed = (parts.number || '').replace(/\s+/g, '');
+    const full = typed && typed.toUpperCase() !== k ? [typed] : [];
+    if (!/^\d+$/.test(k)) return [...new Set([k, ...full])];
+    return [...new Set([...full, k, k.padStart(3, '0')])];
   }
+  // Plain search: name, number and grade. Lots, proxies, other grades etc. are filtered out on the results instead,
+  // so nothing is hidden by eBay's own word exclusions.
   function ebayQuery(parts) {
-    const ex = ['-lot', '-proxy', '-custom', '-repack', '-digital'];
-    if (parts.grader === 'BGS' && parts.qual !== 'BL') ex.push('-"black label"');
-    if (parts.grader !== 'PSA' && parts.qual !== 'PRISTINE') ex.push('-pristine');
     const nums = numberForms(parts);
     const num = nums.length > 1 ? `(${nums.join(',')})` : nums[0] || '';
-    return [searchCore(parts), num, gradeLabel(parts), ...ex].filter(Boolean).join(' ');
+    return [searchCore(parts), num, gradeLabel(parts)].filter(Boolean).join(' ');
   }
+
 
   function parseEbay(doc, siteCur = 'CAD') {
     const out = [];
@@ -174,7 +171,7 @@
     return url;
   }
 
-  // eBay's official sold-items API (Marketplace Insights). Needs an eBay developer key approved for it.
+  // eBay app token (standard scope): used for current listings through eBay's Browse API.
   const SCOPE_BASIC = 'https://api.ebay.com/oauth/api_scope';
   // App token for the standard (public data) scope: used for current listings (Browse API).
   async function ebayBasicToken(appId, certId) {
@@ -197,78 +194,15 @@
     return j.access_token;
   }
 
-  async function ebayToken(appId, certId) {
-    const { ebayToken: cached } = await chrome.storage.session.get('ebayToken');
-    if (cached && cached.app === appId && cached.exp > Date.now() + 60000) return cached.token;
-    const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
-      method: 'POST', credentials: 'omit',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: 'Basic ' + btoa(appId.trim() + ':' + certId.trim()) },
-      body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'https://api.ebay.com/oauth/api_scope/buy.marketplace.insights' })
-    });
-    if (!res.ok) {
-      let err = {};
-      try { err = await res.json(); } catch (e) { /* not JSON */ }
-      if (err.error === 'invalid_scope') {
-        // Keys may be fine: check them against the basic scope to tell the two problems apart.
-        const basic = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
-          method: 'POST', credentials: 'omit',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: 'Basic ' + btoa(appId.trim() + ':' + certId.trim()) },
-          body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'https://api.ebay.com/oauth/api_scope' })
-        }).catch(() => null);
-        if (basic && basic.ok) {
-          // Remember for a day so searches don't keep asking (eBay has closed new access to this API).
-          await chrome.storage.local.set({ ebayInsightsDenied: { app: appId, at: Date.now() } });
-          throw Object.assign(new Error('Your eBay keys work (current listings ✓), but sold-items access (Marketplace Insights) isn’t granted.'), { keysOk: true });
-        }
-      }
-      if (err.error === 'invalid_client') throw new Error('eBay says the App ID / Cert ID are wrong. Use the Production keyset (App ID has “-PRD-”), and copy the Cert ID again.');
-      throw new Error(`eBay refused the keys (${err.error || 'HTTP ' + res.status}${err.error_description ? ': ' + err.error_description : ''})`);
-    }
-    const j = await res.json();
-    await chrome.storage.session.set({ ebayToken: { app: appId, token: j.access_token, exp: Date.now() + (j.expires_in || 7200) * 1000 } });
-    return j.access_token;
-  }
-
-  async function ebayViaApi(parts, keys) {
-    const token = await ebayToken(keys.ebayAppId, keys.ebayCertId);
-    const q = [cardOnly(parts), gradeLabel(parts)].join(' ');
-    let next = `https://api.ebay.com/buy/marketplace_insights/v1_beta/item_sales/search?q=${encodeURIComponent(q)}&limit=200`;
-    const sales = [];
-    for (let page = 0; page < 3 && next; page++) {
-      const res = await fetch(next, { credentials: 'omit', headers: { Authorization: 'Bearer ' + token, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_CA', 'Accept-Language': 'en-CA' } });
-      if (res.status === 403) throw new Error('Your eBay key isn’t approved for sold-items access (Marketplace Insights)');
-      if (!res.ok) throw new Error('eBay API HTTP ' + res.status);
-      const j = await res.json();
-      for (const it of j.itemSales || []) {
-        const p = it.lastSoldPrice || {};
-        sales.push({
-          price: parseFloat(p.value), cur: p.currency || 'CAD', date: new Date(it.lastSoldDate), exact: true,
-          title: it.title || '', url: it.itemWebUrl || '', itemId: (String(it.itemId || '').split('|')[1]) || null,
-          img: (it.image && it.image.imageUrl) || '', auction: (it.buyingOptions || []).includes('AUCTION')
-        });
-      }
-      next = j.next || null;
-    }
-    return sales.filter(x => x.price && !isNaN(x.date));
-  }
-
   async function ebay(query, cfg, parts, ctx = {}) {
     const url = ebaySearchUrl(cfg, parts, ctx.settings);
-    const keys = ctx.secrets || {};
-    let apiError = null;
-    const { ebayInsightsDenied: denied } = await chrome.storage.local.get('ebayInsightsDenied');
-    const skipApi = denied && denied.app === keys.ebayAppId && Date.now() - denied.at < 24 * 3600e3;
-    if (keys.ebayAppId && keys.ebayCertId && !skipApi) {
-      try { return { url, sales: await ebayViaApi(parts, keys), via: 'eBay API' }; }
-      catch (e) { if (!e.keysOk) apiError = e.message; }
-    }
     // Sold-results pages, newest first: up to 3 pages (720 listings) while results are still relevant.
     const sales = [];
     const seen = new Set();
     for (let page = 1; page <= 3; page++) {
       let html;
       try { ({ html } = await getText(page === 1 ? url : url + '&_pgn=' + page)); }
-      catch (e) { if (page > 1) break; if (/Blocked/.test(e.message)) e.blocked = true; if (apiError) e.message = apiError + '; ' + e.message; throw e; }
+      catch (e) { if (page > 1) break; if (/Blocked/.test(e.message)) e.blocked = true; throw e; }
       const doc = toDoc(html);
       if (/captcha|pardon our interruption|security measure|verify yourself/i.test(txt(doc.querySelector('title')) + ' ' + txt(doc.querySelector('h1')))) {
         if (page > 1) break;
@@ -281,7 +215,7 @@
       if (got.cutOff || !hasNext || got.length < 100 || (oldest && root.GCP.daysAgo(oldest) > 120)) break;
       ctx.progress && ctx.progress(`Reading page ${page + 1}…`);
     }
-    return { url, sales, note: apiError ? `eBay API: ${apiError}. Used the website instead.` : '' };
+    return { url, sales };
   }
 
   // ---------------------------------------------------------------- Pokemon Price Tracker API
@@ -791,18 +725,14 @@
   function pageUrl(id, query, cfg, parts, settings) {
     if (id === 'ebay') return ebaySearchUrl(cfg, parts, settings);
     if (id === 'pricecharting') return fill(cfg.url, [searchCore(parts), parts.numberKey].filter(Boolean).join(' ') || query);
-    if (id === 'collectr') return fill(cfg.url, parts.name || query);
     if (id === 'alt') return fill(cfg.url, root.GCP.coreName(parts) || query);
     if (id === 'cardladder') return fill(cfg.url, [searchCore(parts), parts.number || parts.numberKey, gradeLabel(parts)].filter(Boolean).join(' '));
-    if (id === 'terapeak') {
-      const n = numberForms(parts);
-      return fill(cfg.url, [searchCore(parts), n[1] || n[0] || '', gradeLabel(parts)].filter(Boolean).join(' '));
-    }
+    if (id === 'terapeak') return fill(cfg.url, query); // exactly what you typed
     // 130point: the page reads this hash, runs the search and hands the results to the panel.
     if (id === '130point') return cfg.url + '#gcpq=' + encodeURIComponent([searchCore(parts), parts.numberKey, gradeLabel(parts)].filter(Boolean).join(' '));
     if (id === 'snkrdunk') return fill(cfg.url, [searchCore(parts), parts.number || parts.numberKey].filter(Boolean).join(' '));
     return cfg.url;
   }
 
-  root.GCPPlatforms = { psaPhotos, psaQuota, pricetracker, pptFind, pptGet, pptGradeKey, ebayAsks, parseEbayActive, ebayBasicToken, snkrdunkFind, snkrdunkScore, searchCore, numberForms, certViaWeb, parseCertHtml, psaCertImages, parsePriceChartingInfo, migrateSettings, LOGIN_SOURCES, pageCurrency, SECRET_KEYS, getRates, toCAD, ebayViaApi, CERT_PAGES, certToQuery, psaCertViaApi, DEFAULTS, META, FETCHERS, JUNK_RE, fill, pageUrl, ebayQuery, parseEbay, parsePriceCharting, parse130, pickPriceChartingProduct };
+  root.GCPPlatforms = { psaPhotos, psaQuota, pricetracker, pptFind, pptGet, pptGradeKey, ebayAsks, parseEbayActive, ebayBasicToken, snkrdunkFind, snkrdunkScore, searchCore, numberForms, certViaWeb, parseCertHtml, psaCertImages, parsePriceChartingInfo, migrateSettings, LOGIN_SOURCES, pageCurrency, SECRET_KEYS, getRates, toCAD, CERT_PAGES, certToQuery, psaCertViaApi, DEFAULTS, META, FETCHERS, JUNK_RE, fill, pageUrl, ebayQuery, parseEbay, parsePriceCharting, parse130, pickPriceChartingProduct };
 })(globalThis);

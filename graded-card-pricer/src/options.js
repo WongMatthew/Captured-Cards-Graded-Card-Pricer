@@ -1,7 +1,7 @@
 /* global GCPPlatforms */
 const P = GCPPlatforms;
 const $ = (s) => document.querySelector(s);
-const BOOLS = ['autoScan', 'pokemonOnly', 'autoCollectr'];
+const BOOLS = ['autoScan', 'pokemonOnly'];
 
 async function load() {
   const s = await chrome.storage.sync.get(null);
@@ -13,6 +13,7 @@ async function load() {
   for (const k of P.SECRET_KEYS) $('#' + k).value = sec[k] || '';
   if (s.platforms) for (const id of Object.keys(cfg.platforms)) Object.assign(cfg.platforms[id], s.platforms[id] || {});
   P.migrateSettings(cfg);
+  $('#offerPcts').value = (Array.isArray(s.offerPcts) ? s.offerPcts : [70, 80]).join(', ');
   render(cfg);
 }
 
@@ -39,6 +40,8 @@ $('#save').onclick = async () => {
   const out = { platforms, ebayLocation: $('#ebayLocation').value };
   await chrome.storage.local.set(Object.fromEntries(P.SECRET_KEYS.map(k => [k, $('#' + k).value.trim()])));
   for (const k of BOOLS) out[k] = $('#' + k).checked;
+  out.offerPcts = $('#offerPcts').value.split(/[,\s]+/).map(Number).filter(n => n > 0 && n <= 200);
+  if (!out.offerPcts.length) out.offerPcts = [70, 80];
   await chrome.storage.sync.set(out);
   $('#saved').textContent = 'Saved';
   setTimeout(() => ($('#saved').textContent = ''), 1500);
@@ -54,21 +57,11 @@ load();
 $('#testEbay').onclick = async () => {
   const out = $('#ebayResult');
   out.textContent = ' Testing…';
-  await chrome.storage.session.remove(['ebayToken', 'ebayTokenBasic']);
-  await chrome.storage.local.remove('ebayInsightsDenied');
-  const keys = { ebayAppId: $('#ebayAppId').value, ebayCertId: $('#ebayCertId').value };
-  const parts = GCP.splitQuery('Charizard Base Set 4/102 PSA 9');
-  let listings = '';
+  await chrome.storage.session.remove('ebayTokenBasic');
   try {
-    const r = await P.ebayAsks(parts, { url: '' }, keys);
-    listings = `Current listings ✓ (${r.asks.length} found)`;
-  } catch (e) { out.textContent = ' ' + e.message; return; }
-  try {
-    const sales = await P.ebayViaApi(parts, keys);
-    out.textContent = ` ${listings} · Sold items ✓ (${sales.length})`;
-  } catch (e) {
-    out.textContent = ` ${listings} · Sold items: not available (eBay has closed Marketplace Insights). Sold prices come from eBay.ca, Terapeak and 130point instead.`;
-  }
+    const r = await P.ebayAsks(GCP.splitQuery('Charizard Base Set 4/102 PSA 9'), { url: '' }, { ebayAppId: $('#ebayAppId').value, ebayCertId: $('#ebayCertId').value });
+    out.textContent = ` Works: current listings ✓ (${r.asks.length} found)`;
+  } catch (e) { out.textContent = ' ' + e.message; }
 };
 
 $('#testPpt').onclick = async () => {

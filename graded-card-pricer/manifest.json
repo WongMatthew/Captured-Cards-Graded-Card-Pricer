@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Graded Card Pricer",
-  "version": "4.6.0",
-  "description": "Spots graded Pokémon cards in emails and pages and shows recent sold prices from eBay, PriceCharting, 130point, Alt and Collectr.",
+  "version": "5.1.0",
+  "description": "Spots graded Pokémon cards and cert numbers in emails and pages and shows recent sold prices in CAD from eBay.ca, Terapeak, 130point, PriceCharting, SNKRDUNK, Pokemon Price Tracker, Card Ladder and Alt.",
   "minimum_chrome_version": "116",
   "permissions": [
     "sidePanel",
@@ -87,8 +87,7 @@
     {
       "matches": [
         "*://*.alt.xyz/*",
-        "*://alt.xyz/*",
-        "*://*.getcollectr.com/*"
+        "*://alt.xyz/*"
       ],
       "js": [
         "src/mobile-shim.js"
@@ -101,7 +100,6 @@
       "matches": [
         "*://*.alt.xyz/*",
         "*://alt.xyz/*",
-        "*://*.getcollectr.com/*",
         "*://*.cardladder.com/*",
         "*://cardladder.com/*",
         "*://snkrdunk.com/*",

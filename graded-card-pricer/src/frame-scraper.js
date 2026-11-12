@@ -1,11 +1,12 @@
 /* global GCP */
-// Runs on Alt / Collectr pages that the extension opened (mini view iframe or phone companion window).
-// It finds the right card, opens it, and reports SOLD data (never active listings) back to the side panel.
+// Runs on pages the extension opens for a search: SNKRDUNK (hidden view in the panel) and the signed-in windows for
+// Alt, Card Ladder and Terapeak. It reads SOLD data (never active listings) and sends it to the side panel.
 (function () {
   if (window.__gcpFrame) return;
   window.__gcpFrame = true;
 
-  // The target card travels in the URL hash once (#gcp=…), then lives in this tab/frame's sessionStorage.
+  // The search travels in the URL hash once (#gcp=…), then lives in this tab/frame's sessionStorage, so it
+  // survives the site's own navigation (sign-in pages, search → item, …).
   let target = null;
   try {
     const m = location.hash.match(/[#&]gcp=([^&]+)/);
@@ -18,25 +19,15 @@
   } catch (e) { target = null; }
   if (!target) return;
 
-  const platform = location.hostname.includes('getcollectr') ? 'collectr' : location.hostname.includes('cardladder') ? 'cardladder'
-    : location.hostname.includes('snkrdunk') ? 'snkrdunk' : /(^|\.)ebay\./.test(location.hostname) ? 'terapeak' : 'alt';
-
-  // Currency the page is showing. If you've set the site to CAD (or picked CAD in its currency menu) prices are CAD.
-  function pageCurrency() {
-    const tags = [...document.querySelectorAll('button, span, div, a, select, option:checked, [role="button"]')]
-      .filter(el => visible(el) && el.childElementCount <= 2)
-      .map(el => norm(el.tagName === 'SELECT' ? el.selectedOptions[0] && el.selectedOptions[0].text : el.innerText).toUpperCase())
-      .filter(t => /^(CAD|USD|CA\$|C\$|US\$)(\s|$)/.test(t));
-    if (tags.some(t => /^(CAD|CA\$|C\$)/.test(t))) return 'CAD';
-    if (tags.some(t => /^(USD|US\$)/.test(t))) return 'USD';
-    return null;
-  }
-  const rowCur = (text, fallback) => { const m = GCP.parseMoney(text); return (m && m.cur) || fallback; };
+  const host = location.hostname;
+  const platform = host.includes('cardladder') ? 'cardladder' : host.includes('snkrdunk') ? 'snkrdunk'
+    : /(^|\.)ebay\./.test(host) ? 'terapeak' : 'alt';
   const parts = GCP.splitQuery(target.q);
-  const send = (msg) => chrome.runtime.sendMessage({ platform, sid: target.sid, url: location.href, ...msg }).catch(() => {});
-  const status = (text) => send({ type: 'frame-status', text });
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
   const visible = (el) => !!(el && el.getClientRects().length);
+  const send = (msg) => chrome.runtime.sendMessage({ platform, sid: target.sid, url: location.href, ...msg }).catch(() => {});
+  const status = (text) => send({ type: 'frame-status', text });
+  const pageText = () => norm(document.body && document.body.innerText).slice(0, 5000);
 
   // Run fn on DOM changes until it returns true or time runs out.
   function watch(fn, ms, onTimeout) {
@@ -48,156 +39,44 @@
     setTimeout(() => { if (!done) { done = true; obs.disconnect(); onTimeout && onTimeout(); } }, ms);
   }
 
-  // Score a search-result card against the target. Higher is better; < 0 = wrong card.
-  function scoreResult(text) {
-    const m = GCP.matchCard(text, parts);
-    if (!m.ok) return -1;
-    let s = 1;
-    if (parts.numberKey && (GCP.allNumberKeys(text).has(parts.numberKey) || new RegExp('[•#]\\s*0*' + parts.numberKey + '\\b', 'i').test(text))) s += 5;
-    for (const w of parts.name.toLowerCase().split(' ')) if (w.length > 2 && text.toLowerCase().includes(w)) s += 1;
-    const gs = GCP.findGrades(text);
-    if (gs.length) s += GCP.titleMatchesGrade(text, parts.grader, parts.grade, parts.qual) ? 4 : -20;
-    return s;
+  // Currency the page is showing (a CAD setting in your account wins), else null.
+  function pageCurrency() {
+    const tags = [...document.querySelectorAll('button, span, div, a, select, [role="button"]')]
+      .filter(el => visible(el) && el.childElementCount <= 2)
+      .map(el => norm(el.tagName === 'SELECT' ? el.selectedOptions[0] && el.selectedOptions[0].text : el.innerText).toUpperCase())
+      .filter(t => /^(CAD|USD|CA\$|C\$|US\$)(\s|$)/.test(t));
+    if (tags.some(t => /^(CAD|CA\$|C\$)/.test(t))) return 'CAD';
+    if (tags.some(t => /^(USD|US\$)/.test(t))) return 'USD';
+    return null;
   }
 
-  function bestLink(selector) {
-    let best = null;
-    const seen = new Set();
-    for (const a of document.querySelectorAll(selector)) {
-      if (!visible(a) || seen.has(a.href)) continue;
-      seen.add(a.href);
-      // Use the surrounding card's text (title, set, number, grade).
-      let box = a, text = norm(a.innerText);
-      for (let i = 0; i < 4 && text.length < 30 && box.parentElement; i++) { box = box.parentElement; text = norm(box.innerText); }
-      const s = scoreResult(text);
-      if (s > 0 && (!best || s > best.s)) best = { a, s, text };
-    }
-    return best;
+  // ---------------------------------------------------------------- signed in?
+  const SECURITY_RE = /performing security verification|verify you are human|are you human|just a moment/i;
+  function signedOut() {
+    const t = pageText();
+    if (/\b(log ?out|sign ?out|my collection|my account|portfolio)\b/i.test(t)) return false;
+    return /\b(sign up \/ log in|log ?in|sign ?in|create (an )?account)\b/i.test(t);
+  }
+  // While you sign in, keep checking; once you're in, go back to the card being searched.
+  function waitForSignIn(name) {
+    send({ type: 'frame-sales', rows: [], marketPrice: null, note: `Sign in to ${name} in its window: the card is opened automatically once you’re in.` });
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - started > 15 * 60e3) return clearInterval(timer);
+      if (SECURITY_RE.test(pageText()) || signedOut()) return;
+      clearInterval(timer);
+      status('Signed in: opening the card…');
+      if (target.u) location.href = target.u.replace(/#.*$/, '');
+      else location.reload();
+    }, 3000);
   }
 
-  // ---------------------------------------------------------------- Collectr
-  const GRADE_PRICE_RE = /\b(PSA|BGS|CGC|SGC|TAG|ACE|Beckett)\s+(Black Label|Pristine|\d{1,2}(?:\.5)?)\s*\(\s*\$\s?([\d,]+(?:\.\d{1,2})?)\s*\)/gi;
-
-  function collectrGradePrices() {
-    const text = norm(document.body.innerText);
-    const out = {};
-    for (const m of text.matchAll(GRADE_PRICE_RE)) {
-      const grader = m[1].toUpperCase() === 'BECKETT' ? 'BGS' : m[1].toUpperCase();
-      const g = /black/i.test(m[2]) ? { grader, grade: '10', qual: 'BL' } : /pristine/i.test(m[2]) ? { grader, grade: '10', qual: 'PRISTINE' } : { grader, grade: m[2], qual: '' };
-      out[GCP.gradeLabel(g)] = parseFloat(m[3].replace(/,/g, ''));
-    }
-    return out;
-  }
-
-  // Show only the requested grade's line on Collectr's graded chart.
-  function focusLegend(wantLabel) {
-    const items = [...document.querySelectorAll('button, li, div, span')].filter(el => {
-      const t = norm(el.innerText);
-      return el.childElementCount <= 4 && /^(PSA|BGS|CGC|SGC|TAG|ACE)\s+(Black Label|Pristine|\d{1,2}(\.5)?)\s*\(\$[\d,.]+\)$/.test(t);
-    });
-    const buttons = items.filter(el => el.tagName === 'BUTTON');
-    if (buttons.length) items.splice(0, items.length, ...buttons);
-    else for (let i = items.length - 1; i >= 0; i--) if (items.some(o => o !== items[i] && items[i].contains(o))) items.splice(i, 1);
-    const struck = (el) => [el, ...el.querySelectorAll('*')].some(e => /line-through/.test(getComputedStyle(e).textDecorationLine));
-    for (const el of items) {
-      const label = norm(el.innerText).replace(/\s*\(.*/, '');
-      const wanted = label.replace('Black Label', 'Black Label 10').replace('Pristine', 'Pristine 10') === wantLabel || label === wantLabel;
-      if (wanted === struck(el)) el.click();
-    }
-  }
-
-  // Result cards are often divs with the click handler on an inner element: click the title text itself.
-  function clickCard(el) {
-    const firstLine = norm(el.innerText.split('\n')[0]);
-    const leaf = [...el.querySelectorAll('*')].find(n => n.childElementCount === 0 && norm(n.innerText) === firstLine) || el;
-    const target = leaf.closest('a, button, [role="button"], [role="link"]') || leaf;
-    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-      target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
-    }
-  }
-
-  // Collectr has a currency menu (USD by default). Switch it to CAD once per tab.
-  function collectrToCAD() {
-    if (pageCurrency() !== 'USD' || sessionStorage.getItem('gcp-cad-tried')) return;
-    sessionStorage.setItem('gcp-cad-tried', '1');
-    const usd = [...document.querySelectorAll('button, [role="button"], div, span')].find(el => visible(el) && el.childElementCount <= 2 && norm(el.innerText) === 'USD');
-    if (!usd) return;
-    (usd.closest('button, [role="button"]') || usd).click();
-    setTimeout(() => {
-      const cad = [...document.querySelectorAll('button, [role="option"], [role="menuitem"], li, div, span')]
-        .find(el => visible(el) && el.childElementCount <= 2 && /^CAD\b/.test(norm(el.innerText)));
-      if (cad) { (cad.closest('button, [role="option"], [role="menuitem"], li') || cad).click(); sessionStorage.setItem('gcp-cad-done', '1'); }
-    }, 600);
-  }
-
-  function collectr() {
-    const wantLabel = GCP.gradeLabel(parts);
-    setTimeout(collectrToCAD, 1500);
-    if (/\/explore\/product\//.test(location.pathname)) {
-      status('Reading graded prices…');
-      const started = Date.now();
-      watch(() => {
-        if (Date.now() - started < 3000 && pageCurrency() === 'USD' && !sessionStorage.getItem('gcp-cad-done')) return false;
-        const prices = collectrGradePrices();
-        if (!Object.keys(prices).length) return false;
-        const title = norm((document.querySelector('h1') || {}).innerText);
-        const raw = GCP.parsePrice(norm(document.body.innerText).slice(0, 2000).match(/\$\s?[\d,]+\.\d{2}/) || '');
-        send({ type: 'frame-sales', rows: [], product: title, gradePrices: prices, marketPrice: prices[wantLabel] ?? null, rawPrice: raw, cur: pageCurrency() || 'USD' });
-        setTimeout(() => focusLegend(wantLabel), 300);
-        return true;
-      }, 20000, () => send({
-        type: 'frame-sales', rows: [], marketPrice: null,
-        note: /technical difficulties|try again/i.test(document.body.innerText)
-          ? 'Collectr couldn’t load its data right now. Press ↻ or use 📱 Phone.'
-          : 'Collectr shows no graded prices for this card.'
-      }));
-      return;
-    }
-    // Search page: open the product that matches the card. Collectr's search is picky, so try a few phrasings.
-    searchWithFallbacks('Collectr', [parts.name, GCP.coreName(parts), [parts.keyWord, parts.number].join(' ')], 'query', () => {
-      let best = bestLink('a[href*="/explore/product/"]');
-      if (!best) {
-        // Results are clickable cards rather than links.
-        for (const el of document.querySelectorAll('li, .product-card, article')) {
-          const t = norm(el.innerText);
-          if (!visible(el) || t.length < 10 || t.length > 300 || !/\$[\d,]+\.\d{2}/.test(t)) continue;
-          const sc = scoreResult(t);
-          if (sc > 0 && (!best || sc > best.s)) best = { a: el, s: sc, text: t };
-        }
-      }
-      if (!best || (parts.numberKey && best.s < 6)) return false;
-      status('Opening ' + best.text.slice(0, 60) + '…');
-      if (best.a.href) location.href = best.a.href; else clickCard(best.a);
-      return true;
-    });
-  }
-
-  // Try each search phrasing in turn (state kept in sessionStorage across page loads).
-  function searchWithFallbacks(name, queries, param, tryPick) {
-    queries = [...new Set(queries.map(q => norm(q)).filter(Boolean))];
-    const cur = norm(new URLSearchParams(location.search).get(param) || '');
-    let idx = queries.findIndex(q => q.toLowerCase() === cur.toLowerCase());
-    if (idx < 0) idx = 0;
-    status(`Finding the card on ${name}…`);
-    watch(tryPick, 15000, () => {
-      const next = queries[idx + 1];
-      if (next) {
-        status(`Trying “${next}” on ${name}…`);
-        const u = new URL(location.href);
-        u.searchParams.set(param, next);
-        u.hash = '';
-        location.href = u.toString();
-      } else {
-        send({ type: 'frame-sales', rows: [], marketPrice: null, note: `Couldn’t find this exact card on ${name}. Pick it in the mini view or 📱 Phone window.` });
-      }
-    });
-  }
-
-  // ---------------------------------------------------------------- Alt
+  // ---------------------------------------------------------------- reading sold rows
   const LISTING_RE = /\b(bid|bids|buy now|make (an )?offer|starting (bid|at)|current bid|ends? in|time left|watching|asking|list(ed|ing)? price|for sale|add to cart|place bid)\b|\/\s*BID\b|\b\d+D\s*\d+H\b/i;
-  const SOLD_SECTION_RE = /\b(sales? history|recent sales|sold history|past sales|last sold|previous sales|transaction history|comps|sold listings|market sales)\b/i;
+  const SOLD_SECTION_RE = /\b(sales? history|recent sales|sold history|past sales|last sold|previous sales|transaction history|comps|sold listings|market sales|sold)\b/i;
   const PRICE_RE = /\$\s?\d[\d,]*(?:\.\d{1,2})?/g;
 
+  // Smallest elements holding one date and one or two prices: one row per sale.
   function rowsIn(root, requireSoldWord) {
     const rows = [];
     const seen = new Set();
@@ -208,113 +87,139 @@
       const prices = t.match(PRICE_RE);
       if (!prices || prices.length > 2) continue;
       const date = GCP.parseDate(t);
-      if (!date) continue;
-      if (LISTING_RE.test(t)) continue;
+      if (!date || LISTING_RE.test(t)) continue;
       if (requireSoldWord && !/\bsold\b|\bsale\b/i.test(t)) continue;
-      // Keep the smallest element holding both a price and a date.
       if ([...el.children].some(c => { const ct = norm(c.innerText); return /\$\s?\d/.test(ct) && GCP.parseDate(ct); })) continue;
       if (seen.has(t)) continue;
       seen.add(t);
       const link = el.closest('a') || el.querySelector('a');
-      const money = GCP.parseMoney(prices[prices.length - 1]);
+      const money = GCP.parseMoney(prices[0]);
       const exact = GCP.parseDateTime(t);
       rows.push({ price: money && money.amount, cur: (money && money.cur) || pageCurrency() || 'USD', date: (exact || date).toISOString(), exact: !!exact,
-        title: t.slice(0, 160), url: link ? link.href : location.href, scoped: !requireSoldWord });
+        title: t.slice(0, 160), url: link ? link.href : location.href });
       if (rows.length >= 100) break;
     }
     return rows;
   }
 
-  // Alt item pages list population per grading company ("PSA POPULATION 10 587 9 5,796 …", "BGS POPULATION 9.5 75 …").
+  // Tidy a row's text into a title: drop its dates, prices and marketplace name.
+  const MARKETS_RE = /\b(eBay|Goldin|Fanatics(?: Collect)?|PWCC|Heritage|MySlabs|Alt|Probstein|Pristine Auction|REA|Lelands|Memory Lane|Collectable|Courtyard)\b/i;
+  function tidy(r) {
+    const via = (r.title.match(MARKETS_RE) || [])[1];
+    const title = r.title.replace(/\b(?:[A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s+\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/g, ' ')
+      .replace(/(?:US|C|CA)?\s?\$\s?[\d,]+(?:\.\d{1,2})?/g, ' ').replace(via ? new RegExp('\\b' + via + '\\b', 'i') : /$^/, ' ')
+      .replace(/\b(sold|on|for)\b/gi, ' ').replace(/[·•|–—-]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return { ...r, title, rawTitle: r.title, via: via && !/ebay/i.test(via) ? via : undefined };
+  }
+
+  // Pick the search result that is this card (number, name, grade).
+  function scoreResult(text) {
+    if (!GCP.matchCard(text, parts).ok) return -1;
+    let s = 1;
+    if (parts.numberKey && (GCP.allNumberKeys(text).has(parts.numberKey) || new RegExp('[•#]\\s*0*' + parts.numberKey + '\\b', 'i').test(text))) s += 5;
+    for (const w of parts.name.toLowerCase().split(' ')) if (w.length > 2 && text.toLowerCase().includes(w)) s += 1;
+    if (GCP.findGrades(text).length) s += GCP.titleMatchesGrade(text, parts.grader, parts.grade, parts.qual) ? 4 : -20;
+    return s;
+  }
+  function bestLink(selector) {
+    let best = null;
+    const seen = new Set();
+    for (const a of document.querySelectorAll(selector)) {
+      if (!visible(a) || seen.has(a.href)) continue;
+      seen.add(a.href);
+      let box = a, text = norm(a.innerText);
+      for (let i = 0; i < 4 && text.length < 30 && box.parentElement; i++) { box = box.parentElement; text = norm(box.innerText); }
+      const s = scoreResult(text);
+      if (s > 0 && (!best || s > best.s)) best = { a, s, text };
+    }
+    return best;
+  }
+
+  // ---------------------------------------------------------------- Alt
+  // Alt item pages: sold history (signed in), Alt Value, and population per grading company.
   function altPop() {
     const tokens = (document.body.innerText || '').split(/\n+/).map(t => t.trim()).filter(Boolean);
     const graders = {};
     for (let i = 0; i < tokens.length; i++) {
       const h = tokens[i].match(/^(PSA|BGS|CGC|SGC|TAG)\s+POPULATION$/i);
       if (!h) continue;
-      const g = h[1].toUpperCase();
       const counts = {};
       for (let j = i + 1; j + 1 < tokens.length; j += 2) {
         const grade = tokens[j].toUpperCase(), n = tokens[j + 1].replace(/,/g, '');
         if (!/^(10|[1-9](\.5)?|BL|PRISTINE|P)$/.test(grade) || !/^\d+$/.test(n)) break;
-        counts[grade === 'BL' || grade === 'PRISTINE' || grade === 'P' ? 'BL' : grade] = +n;
+        counts[/^(BL|PRISTINE|P)$/.test(grade) ? 'BL' : grade] = +n;
       }
-      if (Object.keys(counts).length) graders[g] = counts;
+      if (Object.keys(counts).length) graders[h[1].toUpperCase()] = counts;
     }
     return Object.keys(graders).length ? { source: 'Alt', note: 'top grades only', graders } : null;
   }
 
   function altSold() {
     let rows = [];
-    // 1) Rows inside a "Sales history"-style section belong to the open asset.
+    // Rows under a "Sales history"-style heading belong to this card; elsewhere only rows that say "sold".
     const heads = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6, div, span, p, button, [role="tab"]')]
       .filter(el => el.childElementCount <= 2 && norm(el.innerText).length < 40 && SOLD_SECTION_RE.test(norm(el.innerText)));
     for (const h of heads) {
       let box = h.parentElement;
       for (let i = 0; i < 5 && box; i++, box = box.parentElement) {
         const r = rowsIn(box, false);
-        if (r.length >= 1) { rows = rows.concat(r); break; }
+        if (r.length) { rows = rows.concat(r.map(x => ({ ...x, scoped: true }))); break; }
       }
     }
-    // 2) Anywhere else, only rows that explicitly say sold.
     if (!rows.length) rows = rowsIn(document.body, true);
     const seen = new Set();
-    rows = rows.filter(r => !seen.has(r.title) && seen.add(r.title));
-    const text = norm(document.body.innerText);
-    const altValue = (text.match(/alt value[^$]{0,20}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
-    const lastSale = (text.match(/last (?:sale|sold)[^$]{0,20}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
-    const mp = GCP.parseMoney(altValue || lastSale || '');
-    return { rows, marketPrice: mp ? mp.amount : null, cur: (mp && mp.cur) || pageCurrency() || 'USD', signedOut: /sign up \/ log in|log in to see|sign in to view/i.test(text) };
+    // Sales-history rows often hold only date / price / marketplace: title them with the card's name.
+    const cardName = norm((document.querySelector('h1') || {}).innerText);
+    rows = rows.filter(r => !seen.has(r.title) && seen.add(r.title)).map(tidy)
+      .map(r => ({ ...r, title: /[a-z]{3,}/i.test(r.title) ? r.title : r.scoped && cardName ? cardName : r.rawTitle }));
+    const text = pageText();
+    const v = (text.match(/alt value[^$]{0,20}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || text.match(/last (?:sale|sold)[^$]{0,20}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
+    const mp = v ? GCP.parseMoney(v) : null;
+    return { rows, marketPrice: mp ? mp.amount : null, cur: (mp && mp.cur) || pageCurrency() || 'USD' };
   }
 
   function alt() {
-    if (/^\/itm\//.test(location.pathname) || /^\/research\//.test(location.pathname)) {
-      status('Reading sold history…');
-      // Open a sales-history tab if the page has one.
-      const tab = [...document.querySelectorAll('button, [role="tab"], a')].find(el => SOLD_SECTION_RE.test(norm(el.innerText)) && norm(el.innerText).length < 30);
+    if (SECURITY_RE.test(pageText())) return send({ type: 'frame-sales', rows: [], marketPrice: null, note: 'Alt is showing a security check: complete it in the Alt window.' });
+    if (signedOut()) return waitForSignIn('Alt');
+    if (/^\/(itm|research)\//.test(location.pathname)) {
+      status('Reading Alt sold history…');
+      // Open the sales-history tab if the page has one.
+      const tab = [...document.querySelectorAll('button, [role="tab"], a')].find(el => /sales? history|recent sales|sold|transactions/i.test(norm(el.innerText)) && norm(el.innerText).length < 30);
       if (tab) tab.click();
       let last = '';
       watch(() => {
         const r = altSold();
         const sig = r.rows.length + ':' + r.marketPrice;
         if (sig !== last) { last = sig; send({ type: 'frame-sales', rows: r.rows, marketPrice: r.marketPrice, cur: r.cur, pop: altPop(), product: norm((document.querySelector('h1, h2') || {}).innerText).slice(0, 80) }); }
-        return r.rows.length >= 3;
-      }, 20000, () => {
+        return r.rows.length >= 5;
+      }, 30000, () => {
         const r = altSold();
-        send({
-          type: 'frame-sales', rows: r.rows, marketPrice: r.marketPrice, cur: r.cur, pop: altPop(),
-          note: r.rows.length ? '' : r.signedOut ? 'Alt only shows sold history when you’re signed in. Open the phone window and log in.' : 'No sold history visible on this Alt page.'
-        });
+        if (!r.rows.length) send({ type: 'frame-sales', rows: [], marketPrice: r.marketPrice, cur: r.cur, pop: altPop(), note: 'No sold history shown on this Alt page.' });
       });
       return;
     }
-    // Browse page = ACTIVE listings. Never report them as sales; open the matching asset to read its sold history.
-    searchWithFallbacks('Alt', [GCP.coreName(parts), parts.name, parts.keyWord], 'query', () => {
+    if (!/^\/browse/.test(location.pathname)) { if (target.u) location.href = target.u.replace(/#.*$/, ''); return; }
+    // Browse results are ACTIVE listings: never counted. Open the matching card to read its sold history.
+    status('Finding the card on Alt…');
+    watch(() => {
       const best = bestLink('a[href*="/itm/"], a[href*="/research/"]');
       if (!best) return false;
       status('Opening ' + best.text.slice(0, 60) + '…');
       location.href = best.a.href;
       return true;
-    });
+    }, 20000, () => send({ type: 'frame-sales', rows: [], marketPrice: null, note: 'Couldn’t find this card in Alt’s search. Open it in the Alt window and it will be read.' }));
   }
 
   // ---------------------------------------------------------------- Card Ladder
   function cardladder() {
-    // Card Ladder sales-history rows: date, sold price, listing title, marketplace (eBay, Goldin, Fanatics…).
+    if (SECURITY_RE.test(pageText())) return send({ type: 'frame-sales', rows: [], marketPrice: null, note: 'Card Ladder is showing a security check: complete it in the Card Ladder window.' });
+    if (signedOut()) return waitForSignIn('Card Ladder');
     status('Reading Card Ladder…');
     let last = '';
     const read = () => {
-      const root = document.querySelector('main, [role="main"]') || document.body;
-      const rows = rowsIn(root, false).map(r => {
-        const via = (r.title.match(/\b(eBay|Goldin|Fanatics(?: Collect)?|PWCC|Heritage|MySlabs|Alt|Probstein|Pristine Auction|REA|Lelands|Memory Lane|Collectable|Courtyard)\b/i) || [])[1];
-        // tidy the title: drop the row's date, prices and marketplace name
-        const title = r.title.replace(/\b(?:[A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s+\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/g, ' ')
-          .replace(/(?:US|C|CA)?\s?\$\s?[\d,]+(?:\.\d{1,2})?/g, ' ').replace(via ? new RegExp('\\b' + via + '\\b', 'i') : /$^/, ' ').replace(/\s+/g, ' ').trim();
-        return { ...r, title: title || r.title, scoped: false, via: via && !/ebay/i.test(via) ? via : undefined };
-      });
-      // Card Ladder's own value for the card ("CL Value", "Card Ladder Value")
-      const text = norm(document.body.innerText);
-      const v = (text.match(/\b(?:CL|Card Ladder)\s*Value[^$]{0,24}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
+      const rows = rowsIn(document.querySelector('main, [role="main"]') || document.body, false).map(tidy)
+        .map(r => ({ ...r, title: /[a-z]{3,}/i.test(r.title) ? r.title : r.rawTitle }));
+      const v = (pageText().match(/\b(?:CL|Card Ladder)\s*Value[^$]{0,24}(\$\s?[\d,]+(?:\.\d{1,2})?)/i) || [])[1];
       return { rows, value: v ? GCP.parseMoney(v) : null };
     };
     watch(() => {
@@ -327,20 +232,14 @@
       return rows.length >= 15;
     }, 30000, () => {
       if (last) return;
-      const t = norm(document.body.innerText).slice(0, 3000);
-      const note = /verif(y|ication)|are you human|just a moment/i.test(t) ? 'Card Ladder is showing a security check: complete it in the Card Ladder window.'
-        : /log ?in|sign ?in|create (an )?account/i.test(t) && !/log ?out|sign ?out/i.test(t) ? 'Sign in to Card Ladder in its window.'
-        : learned() ? 'No sales found on Card Ladder for this search.'
-        : 'Search this card once yourself in the Card Ladder window (Sales History). The extension learns that page and follows every search after.';
-      send({ type: 'frame-sales', rows: [], marketPrice: null, note });
+      send({ type: 'frame-sales', rows: [], marketPrice: null, note: learned() ? 'No sales found on Card Ladder for this search.'
+        : 'Search this card once yourself in the Card Ladder window (Sales History). The extension learns that page and follows every search after.' });
     });
   }
 
-  // ---------------------------------------------------------------- learning a site's search page
-  // When you search in a signed-in window yourself, remember the address with your search text replaced by {q},
+  // When you search in a signed-in window yourself, remember the address with your search replaced by {q},
   // so later searches from the panel open that same kind of page.
-  let learnedOnce = false;
-  const learned = () => learnedOnce || sessionStorage.getItem('gcp-learned') === '1';
+  const learned = () => sessionStorage.getItem('gcp-learned') === '1';
   function learnSearchUrl() {
     const inputs = [...document.querySelectorAll('input[type="search"], input[type="text"], input:not([type])')].filter(i => visible(i) && i.value && i.value.trim().length > 2);
     for (const input of inputs) {
@@ -348,9 +247,7 @@
       const href = location.href.replace(/#.*$/, '');
       for (const form of [encodeURIComponent(v), encodeURIComponent(v).replace(/%20/g, '+'), v.replace(/ /g, '+'), v.replace(/ /g, '%20'), v]) {
         if (form && href.includes(form)) {
-          const template = href.replace(form, '{q}');
-          chrome.runtime.sendMessage({ type: 'learn-url', platform, template }).catch(() => {});
-          learnedOnce = true;
+          chrome.runtime.sendMessage({ type: 'learn-url', platform, template: href.replace(form, '{q}') }).catch(() => {});
           sessionStorage.setItem('gcp-learned', '1');
           return;
         }
@@ -358,104 +255,61 @@
     }
   }
 
-  // ---------------------------------------------------------------- SNKRDUNK (Japan)
-  // Product titles look like "ゲンガーEX SR :1ED [XY4 090/088](拡張パック「ファントムゲート」)"; ":1ED" = 1st Edition,
-  // "【英語版】" = English version. Sales histories list date / condition / price (¥) per grade.
+  // ---------------------------------------------------------------- SNKRDUNK (sales-history page)
+  // Rows read "2026/11/04 PSA10 1,335,000". A hidden view returns them run together
+  // ("2026/11/04PSA101,335,0002026/11/01…"), so match on the text itself, not on line breaks.
   const SD_GRADES = { 'PSA10': 'PSA 10', 'PSA9': 'PSA 9', 'BGS10 BL': 'BGS Black Label 10', 'BGS10 GL': 'BGS 10', 'BGS9.5': 'BGS 9.5' };
-
-  function sdNumber(title) {
-    const m = title.match(/\[(?:[A-Za-z0-9-]+\s+)?0*(\d{1,3})\s*(?:\/|\])/) || title.match(/\b0*(\d{1,3})\s*\/\s*\d{1,3}\b/);
-    return m ? m[1] : '';
-  }
-  function sdScore(title) {
-    let s = 0;
-    const want = (parts.numberKey || '').replace(/^0+/, '');
-    const num = sdNumber(title);
-    if (want) { if (num === want) s += 10; else if (num) return -1; }
-    const first = /:1ED|1st/i.test(title), english = /英語版/.test(title);
-    const wantFirst = (parts.variants || []).includes('1st Edition'), wantJp = (parts.variants || []).includes('Japanese');
-    s += first === wantFirst ? 3 : -3;
-    if (wantJp) s += english ? -5 : 3; else s += english ? 2 : 0;
-    if (/未開封|パック|ボックス|BOX/i.test(title)) s -= 8; // sealed products
-    return s;
-  }
-
   function snkrdunk() {
-    const path = location.pathname;
-    if (/^\/apparels\/\d+\/sales-histories/.test(path)) {
-      status('Reading SNKRDUNK sales…');
-      watch(() => {
-        // Rows read as "2026/11/04 PSA10 1,335,000". A hidden view returns them run together
-        // ("2026/11/04PSA101,335,0002026/11/01…"), so match on the text itself, not on line breaks.
-        const text = (document.body.textContent || '').replace(/\s+/g, ' ');
-        const title = norm((document.querySelector('h1') || {}).textContent) || norm(document.title);
-        const conds = Object.keys(SD_GRADES).concat(['PSA8以下', 'BGS9以下', 'ARS10\\+', 'ARS10', 'ARS9', 'ARS8以下', '他鑑定品', '[A-D]'])
-          .sort((a, b) => b.length - a.length).join('|');
-        const re = new RegExp('(\\d{4}/\\d{2}/\\d{2}) ?(' + conds + ') ?(\\d{1,3}(?:,\\d{3})*)(?=\\d{4}/|[^\\d,]|$)', 'g');
-        const rows = [];
-        for (const m of text.matchAll(re)) {
-          const label = SD_GRADES[m[2]];
-          if (!label) continue; // ungraded (A–D), "8 or lower", other graders
-          rows.push({ price: +m[3].replace(/,/g, ''), cur: 'JPY', date: GCP.parseDate(m[1]).toISOString(), title: `${title} ${label}`, url: location.href, scoped: true });
-        }
-        if (!rows.length) return false;
-        send({ type: 'frame-sales', rows, marketPrice: null, cur: 'JPY', product: title });
-        return true;
-      }, 20000, () => send({ type: 'frame-sales', rows: [], marketPrice: null, note: 'SNKRDUNK has no sales history for this card yet.' }));
-      return;
-    }
-    const prod = path.match(/^\/apparels\/(\d+)\/?$/);
-    if (prod) { location.href = `/apparels/${prod[1]}/sales-histories`; return; }
-    // search results → the exact version of the card
-    status('Finding the card on SNKRDUNK…');
+    if (!/^\/apparels\/\d+\/sales-histories/.test(location.pathname)) return;
+    status('Reading SNKRDUNK sales…');
     watch(() => {
-      let best = null;
-      for (const a of document.querySelectorAll('a[href*="/apparels/"]')) {
-        const id = (a.getAttribute('href').match(/\/apparels\/(\d+)\/?$/) || [])[1];
-        if (!id) continue;
-        const t = norm(a.innerText);
-        const sc = sdScore(t);
-        if (sc > 0 && (!best || sc > best.sc)) best = { id, sc, t };
+      const text = (document.body.textContent || '').replace(/\s+/g, ' ');
+      const title = norm((document.querySelector('h1') || {}).textContent) || norm(document.title);
+      const conds = Object.keys(SD_GRADES).concat(['PSA8以下', 'BGS9以下', 'ARS10\\+', 'ARS10', 'ARS9', 'ARS8以下', '他鑑定品', '[A-D]'])
+        .sort((a, b) => b.length - a.length).join('|');
+      const re = new RegExp('(\\d{4}/\\d{2}/\\d{2}) ?(' + conds + ') ?(\\d{1,3}(?:,\\d{3})*)(?=\\d{4}/|[^\\d,]|$)', 'g');
+      const rows = [];
+      for (const m of text.matchAll(re)) {
+        const label = SD_GRADES[m[2]];
+        if (!label) continue; // ungraded (A–D), "8 or lower", other graders
+        rows.push({ price: +m[3].replace(/,/g, ''), cur: 'JPY', date: GCP.parseDate(m[1]).toISOString(), title: `${title} ${label}`, url: location.href, scoped: true });
       }
-      if (!best) return false;
-      status('Opening ' + best.t.slice(0, 50) + '…');
-      location.href = `/apparels/${best.id}/sales-histories`;
+      if (!rows.length) return false;
+      send({ type: 'frame-sales', rows, marketPrice: null, cur: 'JPY', product: title });
       return true;
-    }, 15000, () => send({ type: 'frame-sales', rows: [], marketPrice: null, note: 'This card isn’t on SNKRDUNK (it mostly lists Japanese cards and popular English ones).' }));
+    }, 20000, () => send({ type: 'frame-sales', rows: [], marketPrice: null, note: 'SNKRDUNK has no sales history for this card yet.' }));
   }
 
-  // ---------------------------------------------------------------- Terapeak (eBay Seller Hub → Research)
-  // Sold tab: one row per sold listing with title (item link), average sold price, and date last sold.
-  // These are eBay's actual sold prices, so accepted best offers show their real amount.
+  // ---------------------------------------------------------------- Terapeak (eBay Seller Hub → Research, Sold tab)
+  // One row per sold listing: title (item link), sold price, date. eBay's actual prices, incl. accepted offers.
   function terapeak() {
     status('Reading Terapeak sold listings…');
+    const siteCur = /ebay\.ca$/.test(host) ? 'CAD' : 'USD';
     let last = '';
     const read = () => {
       const rows = [];
       const seen = new Set();
       for (const a of document.querySelectorAll('a[href*="/itm/"]')) {
-        const row = a.closest('tr, [role="row"], li, .research-table-row') || a.parentElement && a.parentElement.parentElement;
+        const row = a.closest('tr, [role="row"], li, .research-table-row') || (a.parentElement && a.parentElement.parentElement);
         if (!row || seen.has(row)) continue;
         seen.add(row);
         const text = norm(row.innerText || row.textContent);
         const money = GCP.parseMoney(text);
         const date = GCP.parseDate(text.replace(/\b\d+\s+(sold|total)\b/gi, ''));
         if (!money || !date) continue;
-        const id = (a.href.match(/\/itm\/(?:[^/]+\/)?(\d{9,})/) || [])[1] || null;
-        const qty = +((text.match(/\b(\d+)\s*(?:sold|total sold)\b/i) || [])[1] || 1);
-        rows.push({ price: money.amount, cur: money.cur || 'CAD', date: date.toISOString(), title: norm(a.innerText || a.textContent) || text.slice(0, 140),
-          url: a.href.split('?')[0], itemId: id, realBestOffer: true, qty });
+        rows.push({ price: money.amount, cur: money.cur || siteCur, date: date.toISOString(), title: norm(a.innerText || a.textContent) || text.slice(0, 140),
+          url: a.href.split('?')[0], itemId: (a.href.match(/\/itm\/(?:[^/]+\/)?(\d{9,})/) || [])[1] || null, realBestOffer: true });
       }
       return rows;
     };
     watch(() => {
       const rows = read();
       const sig = rows.length + ':' + (rows[0] && rows[0].itemId);
-      if (rows.length && sig !== last) { last = sig; send({ type: 'frame-sales', rows, marketPrice: null, cur: 'CAD' }); }
+      if (rows.length && sig !== last) { last = sig; send({ type: 'frame-sales', rows, marketPrice: null, cur: siteCur }); }
       return rows.length >= 50;
     }, 30000, () => {
       if (last) return;
-      const t = norm(document.body.innerText).slice(0, 4000);
+      const t = pageText();
       const note = /sign in|sign-in/i.test(t) && !/sign out/i.test(t) ? 'Sign in to eBay in the Terapeak window.'
         : /seller hub|get started|opt in|subscribe/i.test(t) ? 'Open Seller Hub → Research once in the Terapeak window to turn on Terapeak (free).'
         : 'No sold listings on Terapeak for this search.';
@@ -463,14 +317,14 @@
     });
   }
 
-  // SPA route changes: re-run when the path changes.
+  // Single-page sites change address without reloading: re-run when it changes.
   let lastPath = '';
   function route() {
     if (location.pathname + location.search === lastPath) return;
     lastPath = location.pathname + location.search;
-    ({ collectr, alt, cardladder, snkrdunk, terapeak })[platform]();
+    ({ alt, cardladder, snkrdunk, terapeak })[platform]();
   }
   route();
   setInterval(route, 1000);
-  if (['cardladder', 'alt', 'collectr', 'terapeak'].includes(platform)) setInterval(learnSearchUrl, 2000);
+  if (platform === 'cardladder' || platform === 'alt') setInterval(learnSearchUrl, 2000);
 })();

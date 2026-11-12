@@ -86,9 +86,6 @@ assert.strictEqual(w['3d'].count, 4);
 assert.strictEqual(w['5d'].count, 6);
 assert.strictEqual(w['7d'].count, 8);
 assert.strictEqual(w['1d'].avg, 105);
-const trimmed = G.trimOutliers([...sales, { price: 5000, date: now }]);
-assert(!trimmed.some(s => s.price === 5000));
-assert.strictEqual(G.trimOutliers(sales).length, sales.length, 'normal spread must not be trimmed');
 console.log('all detect tests passed');
 
 // --- v3: typed bare numbers, cards that only exist in one variant, cert numbers
@@ -173,8 +170,8 @@ console.log('v3.2 tests passed');
   assert(!G.matchCard('Gengar EX 090/088 PSA 10 English', gm).ok);
   assert(!G.matchCard('Gengar ex 090/128 30th Celebration PSA 10', gm).ok, 'same number, different set');
   assert.strictEqual(G.parseDate('2026/11/04', now).getDate(), 4);
-  assert.strictEqual(GCPPlatforms.ebayQuery(g).split(' -')[0], 'Gengar EX (90,090) PSA 10');
-  assert.strictEqual(GCPPlatforms.ebayQuery(G.splitQuery('Umbreon VMAX Evolving Skies 215/203 PSA 10')).split(' -')[0], 'Umbreon VMAX (215,215/203) PSA 10');
+  assert.strictEqual(GCPPlatforms.ebayQuery(g), 'Gengar EX (90,090) PSA 10');
+  assert.strictEqual(GCPPlatforms.ebayQuery(G.splitQuery('Umbreon VMAX Evolving Skies 215/203 PSA 10')), 'Umbreon VMAX (215/203,215) PSA 10');
   console.log('v4 tests passed');
 }
 
@@ -189,6 +186,29 @@ console.log('v3.2 tests passed');
   assert(G.matchCard('2022 Pokemon Brilliant Stars Sylveon VMAX TG15/TG30 PSA 10', p).ok);
   assert(!G.matchCard('Sylveon V TG14/TG30 Brilliant Stars PSA 10', p).ok);
   assert(!G.matchCard('Sylveon VMAX 075/203 Evolving Skies PSA 10', p).ok);
-  assert.strictEqual(GCPPlatforms.ebayQuery(p).split(' -')[0], 'Sylveon VMAX TG15 PSA 10');
+  assert.strictEqual(GCPPlatforms.ebayQuery(p), 'Sylveon VMAX TG15 PSA 10');
   console.log('v4.2 tests passed');
+}
+
+// --- v4.7: card type only enforced when the search names one
+{
+  const loose = G.splitQuery('Sylveon TG15 PSA 10');
+  assert(G.matchCard('2022 POKEMON SWORD & SHIELD BRILLIANT STARS #TG15 FULL ART/SYLVEON VMAX PSA 10', loose).ok, 'no type in search → VMAX listing kept');
+  assert(!G.matchCard('Sylveon V TG14/TG30 Brilliant Stars PSA 10', loose).ok, 'different number still dropped');
+  const v = G.splitQuery('Umbreon V PSA 10');
+  assert.strictEqual(G.matchCard('Umbreon VMAX 215/203 PSA 10', v).reason, 'is VMAX');
+  assert(G.matchCard('Umbreon V 189/203 PSA 10', v).ok);
+  assert(!G.matchCard('Umbreon V 189/203 PSA 10', G.splitQuery('Umbreon VMAX PSA 10')).ok);
+  console.log('v4.7 tests passed');
+}
+
+// --- v4.9: Terapeak on eBay.com with the exact words typed; numbers kept as typed (SV56)
+{
+  const q = 'psa 10 greninja gx hidden fates sv56';
+  const p = G.splitQuery(q);
+  assert(/ebay\.com\/sh\/research\?marketplace=EBAY-US&keywords=psa\+10\+greninja\+gx\+hidden\+fates\+sv56/.test(GCPPlatforms.pageUrl('terapeak', q, GCPPlatforms.DEFAULTS.platforms.terapeak, p)));
+  assert.strictEqual(GCPPlatforms.ebayQuery(p), 'greninja gx (SV56,56,056) PSA 10');
+  assert(G.matchCard('Greninja GX SV56/SV94 Hidden Fates Shiny Vault PSA 10', p).ok);
+  assert(!G.matchCard('Greninja GX SV55 Hidden Fates PSA 10', p).ok);
+  console.log('v4.9 tests passed');
 }

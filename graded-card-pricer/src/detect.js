@@ -295,7 +295,7 @@
     return {
       name, number, numberKey: numberKey(number), totalKey: [...totalKeys(number)][0] || '',
       grader: g ? g.grader : '', grade: g ? g.grade : '', qual: g ? g.qual : '',
-      variants, types: TYPE_STRICT.filter(t => new RegExp('(^|[^a-z])' + t.replace('.', '\\.') + '([^a-z]|$)', 'i').test(name)),
+      variants, types: TYPE_STRICT.concat('v').filter(t => new RegExp('(^|[^a-z])' + t.replace('.', '\\.') + '([^a-z]|$)', 'i').test(name)),
       keyWord: keyWords[0] || words[0] || ''
     };
   }
@@ -328,10 +328,15 @@
     const t = fold(title);
     if (parts.keyWord && !new RegExp('(^|[^a-z])' + fold(parts.keyWord).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(t))
       return { ok: false, reason: `missing “${parts.keyWord}”` };
-    for (const ty of parts.types || []) if (!t.includes(ty)) return { ok: false, reason: `not ${ty.toUpperCase()}` };
-    for (const ty of TYPE_STRICT) {
-      if ((parts.types || []).includes(ty)) continue;
-      if (new RegExp('(^|[^a-z])' + ty.replace('.', '\\.') + '([^a-z]|$)').test(t)) return { ok: false, reason: `is ${ty.toUpperCase()}` };
+    // Card type (V / VMAX / VSTAR / GX …) only matters when your search names one, and an exact card-number match
+    // outweighs wording: "Sylveon TG15 PSA 10" accepts "Sylveon VMAX TG15", "Umbreon V …" rejects "Umbreon VMAX …".
+    const numberHit = parts.numberKey && allNumberKeys(title).has(parts.numberKey);
+    const qTypes = parts.types || [];
+    if (qTypes.length && !numberHit) {
+      const hasType = (ty) => new RegExp('(^|[^a-z])' + ty.replace('.', '\\.') + '([^a-z]|$)').test(t);
+      const titleType = TYPE_STRICT.concat('v').find(hasType);
+      for (const ty of qTypes) if (!hasType(ty)) return { ok: false, reason: titleType ? `is ${titleType.toUpperCase()}` : `not ${ty.toUpperCase()}` };
+      for (const ty of TYPE_STRICT.concat('v')) if (!qTypes.includes(ty) && hasType(ty) && !(ty === 'v' && qTypes.some(q => /^v/.test(q)))) return { ok: false, reason: `is ${ty.toUpperCase()}` };
     }
     if (parts.numberKey) {
       const keys = allNumberKeys(title);
@@ -508,17 +513,6 @@
     return { count: s.length, avg: sum / s.length, median: s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2, low: s[0], high: s[s.length - 1] };
   }
 
-  // Drop extreme prices (mislabeled listings, lots that slipped through) using the median absolute deviation.
-  function trimOutliers(sales) {
-    if (sales.length < 4) return sales;
-    const p = sales.map(x => x.price).sort((a, b) => a - b);
-    const med = p.length % 2 ? p[p.length >> 1] : (p[p.length / 2 - 1] + p[p.length / 2]) / 2;
-    const dev = p.map(x => Math.abs(x - med)).sort((a, b) => a - b);
-    const mad = dev[dev.length >> 1];
-    const limit = Math.max(3.5 * 1.4826 * mad, med * 0.2);
-    return sales.filter(x => Math.abs(x.price - med) <= limit);
-  }
-
   const WINDOWS = [
     { key: '1d', label: 'Today', short: '1D', days: 1 },
     { key: '3d', label: 'Last 3 days', short: '3D', days: 3 },
@@ -539,7 +533,7 @@
 
   root.GCP = {
     GRADE_RE, CARD_NO_RE, CARD_NO_RE_G, WINDOWS, VARIANTS, detectCards, findGrades, gradeLabel, splitQuery, buildQuery,
-    titleMatchesGrade, matchCard, parsePrice, parseDate, daysAgo, inWindow, stats, trimOutliers, windowStats, cleanName,
+    titleMatchesGrade, matchCard, parsePrice, parseDate, daysAgo, inWindow, stats, windowStats, cleanName,
     pokemonScore, parseMoney, parseDateTime, extractNumber, numberKey, allNumberKeys, coreName, VARIANTS_WORDS: new Set('japanese english korean chinese 1st first edition shadowless unlimited reverse holo promo'.split(' ')), inherentVariants, dominantTotal, totalKeys, detectCerts, parseCertQuery, parseGradeText
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.GCP;

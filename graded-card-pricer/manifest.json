@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Graded Card Pricer",
-  "version": "5.1.0",
-  "description": "Spots graded Pokémon cards and cert numbers in emails and pages and shows recent sold prices in CAD from eBay.ca, Terapeak, 130point, PriceCharting, SNKRDUNK, Pokemon Price Tracker, Card Ladder and Alt.",
+  "version": "5.2.0",
+  "description": "Spots graded Pokémon cards and cert numbers in emails and pages and shows recent sold prices in CAD from eBay.ca, Terapeak, PriceCharting, SNKRDUNK, Pokemon Price Tracker, Card Ladder and Alt.",
   "minimum_chrome_version": "116",
   "permissions": [
     "sidePanel",
@@ -69,18 +69,6 @@
       "js": [
         "src/detect.js",
         "src/cert-reader.js"
-      ],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "*://130point.com/sales*",
-        "*://*.130point.com/sales*"
-      ],
-      "js": [
-        "src/detect.js",
-        "src/platforms.js",
-        "src/point130-reader.js"
       ],
       "run_at": "document_idle"
     },

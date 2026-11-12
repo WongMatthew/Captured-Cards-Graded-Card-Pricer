@@ -28,7 +28,6 @@ function render(cfg) {
     row.innerHTML = `<label class="name"><input type="checkbox" data-id="${id}" class="en"> ${P.META[id].name}</label><input type="text" data-id="${id}" class="url">`;
     row.querySelector('.en').checked = p.enabled;
     row.querySelector('.url').value = p.url;
-    if (id === '130point') row.querySelector('.url').disabled = true;
     box.appendChild(row);
   }
 }

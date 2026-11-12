@@ -4,7 +4,7 @@
   const { parseDate, matchCard, gradeLabel } = root.GCP;
 
   // Everything is shown in Canadian dollars. eBay is searched on eBay.ca (prices already in CAD); sources with no
-  // Canadian version (PriceCharting, 130point, Alt) are converted at the Bank of Canada daily rate and marked "converted".
+  // Canadian version (PriceCharting, Alt, Card Ladder) are converted at the Bank of Canada daily rate and marked "converted".
   const DEFAULTS = {
     autoScan: false,
     pokemonOnly: true,
@@ -13,7 +13,6 @@
     platforms: {
       ebay: { enabled: true, url: 'https://www.ebay.ca/sch/i.html?_nkw={q}&LH_Sold=1&LH_Complete=1&_sop=13&_ipg=240' },
       pricecharting: { enabled: true, url: 'https://www.pricecharting.com/search-products?q={q}&type=prices' },
-      '130point': { enabled: true, url: 'https://130point.com/sales/' },
       alt: { enabled: true, url: 'https://alt.xyz/browse?query={q}&category=POKEMON_CARDS' },
       cardladder: { enabled: true, url: 'https://app.cardladder.com/sales-history?q={q}' },
       ppt: { enabled: true, url: 'https://www.pokemonpricetracker.com' },
@@ -35,7 +34,6 @@
   const META = {
     ebay: { name: 'eBay.ca', short: 'eB', color: '#3b82f6', mode: 'fetch', cur: 'CAD', note: 'Sold & completed listings, in CAD' },
     pricecharting: { name: 'PriceCharting', short: 'PC', color: '#16a34a', mode: 'fetch', cur: 'USD', note: 'Completed sales by grade' },
-    '130point': { name: '130point', short: '130', color: '#f59e0b', mode: 'fetch', cur: 'USD', note: 'eBay sales incl. real best-offer prices' },
     alt: { name: 'Alt', short: 'Alt', color: '#a855f7', mode: 'embed', cur: 'USD', note: 'Sold history (sign in to Alt)' },
     snkrdunk: { name: 'SNKRDUNK', short: 'SD', color: '#111827', mode: 'embed', cur: 'JPY', note: 'Japan marketplace sales history (¥ → CAD)' },
     ppt: { name: 'Pokemon Price Tracker', short: 'PPT', color: '#f97316', mode: 'fetch', cur: 'USD', note: 'eBay graded-sales database (API key)' },
@@ -465,43 +463,7 @@
     return { url: productUrl, product, sales: parsePriceCharting(doc), pop: extra.pop, info: { ...extra.info, title: product } };
   }
 
-  // ---------------------------------------------------------------- 130point
-  function parse130(doc) {
-    const out = [];
-    for (const tr of doc.querySelectorAll('tr')) {
-      const text = txt(tr);
-      if (text.length < 10 || tr.querySelector('tr')) continue;
-      const exact = root.GCP.parseDateTime(text);
-      const dm = text.match(/Date:?\s*((?:[A-Z][a-z]{2}\s+)?\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}|[A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4}|\d{4}-\d{2}-\d{2})/);
-      const date = exact || parseDate(dm ? dm[1] : text);
-      const sale = text.match(/(?:Sale|Sold|Final|Best Offer)\s*Price:?\s*[^\d]{0,6}[\d,]+(?:\.\d{1,2})?(?:\s?[A-Z]{3}\b)?/i);
-      const dataPrice = tr.getAttribute('data-price');
-      const money = root.GCP.parseMoney(sale ? sale[0] : dataPrice ? '$' + dataPrice + ' ' + (tr.getAttribute('data-currency') || '') : text);
-      if (!date || !money) continue;
-      const a = tr.querySelector('a[href*="ebay"]') || tr.querySelector('a[href]');
-      const href = a ? a.getAttribute('href') || '' : '';
-      const idM = href.match(/(?:\/itm\/(?:[^/]+\/)?|item=)(\d{9,})/);
-      const img = tr.querySelector('img');
-      // Currency: from the price text, else the eBay site the sale happened on, else US$.
-      const cur = money.cur || (/ebay\.ca\b/.test(href) ? 'CAD' : /ebay\.co\.uk\b/.test(href) ? 'GBP' : 'USD');
-      out.push({
-        price: money.amount, cur, date, exact: !!exact, title: txt(a) || text.slice(0, 140), url: href, itemId: idM ? idM[1] : null,
-        img: img ? img.getAttribute('src') || '' : '', bestOffer: /best offer/i.test(text), realBestOffer: /best offer/i.test(text)
-      });
-    }
-    return out;
-  }
 
-  async function point130(query, cfg, parts) {
-    const body = new URLSearchParams({ query: [searchCore(parts), parts.numberKey, gradeLabel(parts)].filter(Boolean).join(' '), type: '2', subcat: '-1' });
-    let html;
-    try {
-      ({ html } = await getText('https://back.130point.com/sales/', {
-        method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }
-      }));
-    } catch (e) { if (/Blocked/.test(e.message)) e.blocked = true; throw e; }
-    return { url: cfg.url, sales: parse130(toDoc(html)) };
-  }
 
   // ---------------------------------------------------------------- cert lookups
   const CERT_PAGES = {
@@ -719,7 +681,7 @@
     return null;
   }
 
-  const FETCHERS = { ppt: pricetracker, ebay, pricecharting, '130point': point130 };
+  const FETCHERS = { ppt: pricetracker, ebay, pricecharting };
 
   // Pages for "Open ↗" and the mini views.
   function pageUrl(id, query, cfg, parts, settings) {
@@ -728,11 +690,9 @@
     if (id === 'alt') return fill(cfg.url, root.GCP.coreName(parts) || query);
     if (id === 'cardladder') return fill(cfg.url, [searchCore(parts), parts.number || parts.numberKey, gradeLabel(parts)].filter(Boolean).join(' '));
     if (id === 'terapeak') return fill(cfg.url, query); // exactly what you typed
-    // 130point: the page reads this hash, runs the search and hands the results to the panel.
-    if (id === '130point') return cfg.url + '#gcpq=' + encodeURIComponent([searchCore(parts), parts.numberKey, gradeLabel(parts)].filter(Boolean).join(' '));
     if (id === 'snkrdunk') return fill(cfg.url, [searchCore(parts), parts.number || parts.numberKey].filter(Boolean).join(' '));
     return cfg.url;
   }
 
-  root.GCPPlatforms = { psaPhotos, psaQuota, pricetracker, pptFind, pptGet, pptGradeKey, ebayAsks, parseEbayActive, ebayBasicToken, snkrdunkFind, snkrdunkScore, searchCore, numberForms, certViaWeb, parseCertHtml, psaCertImages, parsePriceChartingInfo, migrateSettings, LOGIN_SOURCES, pageCurrency, SECRET_KEYS, getRates, toCAD, CERT_PAGES, certToQuery, psaCertViaApi, DEFAULTS, META, FETCHERS, JUNK_RE, fill, pageUrl, ebayQuery, parseEbay, parsePriceCharting, parse130, pickPriceChartingProduct };
+  root.GCPPlatforms = { psaPhotos, psaQuota, pricetracker, pptFind, pptGet, pptGradeKey, ebayAsks, parseEbayActive, ebayBasicToken, snkrdunkFind, snkrdunkScore, searchCore, numberForms, certViaWeb, parseCertHtml, psaCertImages, parsePriceChartingInfo, migrateSettings, LOGIN_SOURCES, pageCurrency, SECRET_KEYS, getRates, toCAD, CERT_PAGES, certToQuery, psaCertViaApi, DEFAULTS, META, FETCHERS, JUNK_RE, fill, pageUrl, ebayQuery, parseEbay, parsePriceCharting, pickPriceChartingProduct };
 })(globalThis);

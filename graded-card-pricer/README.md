@@ -1,8 +1,8 @@
-# Graded Card Pricer (Chrome extension) · v5.1
+# Graded Card Pricer (Chrome extension) · v5.2
 
 Reads the email or page you have open, finds graded Pokémon cards ("Umbreon VMAX 215/203 PSA 10",
 "Charizard Base Set 4/102 BGS 9.5", PSA slab text like "#215 UMBREON VMAX GEM MT 10"), and shows recent **sold**
-prices from eBay.ca, Terapeak, 130point, PriceCharting, SNKRDUNK, Pokemon Price Tracker, Card Ladder and Alt in one side panel.
+prices from eBay.ca, Terapeak, PriceCharting, SNKRDUNK, Pokemon Price Tracker, Card Ladder and Alt in one side panel.
 
 ## What you get
 
@@ -42,9 +42,9 @@ prices from eBay.ca, Terapeak, 130point, PriceCharting, SNKRDUNK, Pokemon Price 
   - a lot or proxy.
 
   A listing that just leaves out "1st Edition" or "Japanese" still counts. Every rejected listing shows its reason, with **Use** to override.
-- **Every matching sale counts.** Best offers count, using 130point's real accepted price when it has one. Nothing is
+- **Every matching sale counts.** Best offers count, using the real accepted price when Terapeak or Card Ladder has it. Nothing is
   trimmed. **Each sale counts once.** The same eBay item number reported by several sites is one sale. Sources without item
-  numbers (Card Ladder, Alt, some 130point / PriceCharting rows) are matched on marketplace, day (±1), price (exact in
+  numbers (Card Ladder, Alt, some PriceCharting rows) are matched on marketplace, day (±1), price (exact in
   the same currency, within 2.5% after conversion) and title. Two sales from the same source are never merged, so a
   seller's two identical copies sold the same day both count. The merged sale lists every site that reported it.
 - **All in CAD.** Other currencies are converted at the Bank of Canada daily rate and marked "≈".
@@ -58,7 +58,6 @@ prices from eBay.ca, Terapeak, 130point, PriceCharting, SNKRDUNK, Pokemon Price 
 | eBay.ca | Sold listings (up to 3 pages) | Nothing |
 | **Terapeak** | eBay.com research tool (Seller Hub → Research), searched with exactly the words you typed: sold listings with actual prices, incl. accepted best offers (US$ → CAD) | Sign in to eBay in its 📱 window once (Terapeak is free in Seller Hub) |
 | **Pokemon Price Tracker** (API key) | eBay graded-sales database. Business plan: every sold listing, which joins your sales. Other paid plans: a per-grade summary (smart price, median, 7-day price, trend) shown as a reference. Uses the 1st Edition pool when you search 1st Edition. | API key in Settings |
-| 130point | eBay + auction-house sales, incl. real best-offer prices | Nothing |
 | PriceCharting | The exact product page (e.g. the 1st Edition version) and its graded sales | Nothing |
 | **SNKRDUNK** | Japan's largest card marketplace: sales history per grade (PSA 10/9, BGS 9.5/10/Black Label), ¥ → CAD | Nothing |
 | Card Ladder, Alt | Your signed-in sales history and value. Alt: sign in once in its window and it continues to the card, opens it, and reads its sold history (never listings or bids). | 📱 Connect once |
@@ -102,16 +101,14 @@ and names the source under the chart.
 
 eBay is searched on **eBay.ca**, so its prices are already in CAD. Alt and Card Ladder show CAD when you set CAD
 in your account there; the extension detects which currency each page
-is showing. Anything that still arrives in another currency (PriceCharting and most of 130point only show US$) is converted at the
-**Bank of Canada daily rate** and marked **≈ from USD …**. Untick *Include US$ sources (converted)* to use only native
-CAD prices.
+is showing. Anything that still arrives in another currency (PriceCharting, Terapeak, Alt and Card Ladder show US$) is converted at the
+**Bank of Canada daily rate** and marked **≈ from USD …**. Every matching sale counts.
 
 ## How each source is read
 
 | Source | How | Notes |
 |---|---|---|
 | eBay.ca | Sold + completed results, newest first, **up to 3 pages** (720 listings) | With eBay API keys (Settings) it uses eBay's official sold-items API instead: exact sale times, no blocking. eBay approves that API case by case. Without keys, if eBay refuses the background request, **Open sold results ↗** opens a normal tab; every results page you open there adds to the data. Settings: all eBay.ca sellers, or Canada-only. |
-| 130point | Its sales search | If refused, **Search on 130point ↗** opens 130point, types the search for you, and the results are read from that tab. |
 | PriceCharting | Matching product, then its completed-sales tables | US$ (converted) unless your PriceCharting account is set to CAD. |
 | Card Ladder | Your signed-in Card Ladder sales history | **📱 Connect** once and sign in; the window then follows every search. |
 | Alt | Your signed-in Alt: opens the matching item and reads only rows marked as sold | **📱 Connect** once and sign in. Browse results are active listings and are never counted. |
@@ -130,7 +127,7 @@ Each gets one real phone-sized window. Sign in once, minimise it if you like, an
 Closing the window disconnects it.
 
 **Date boxes:** calendar days in your time zone, counting today. "Today" = sold today; "Last 7 days" = today plus the 6
-days before. Sales with an exact time (eBay API, 130point) are placed on your local date.
+days before. Sales with an exact time (Pokemon Price Tracker) are placed on your local date.
 
 ## Tests
 

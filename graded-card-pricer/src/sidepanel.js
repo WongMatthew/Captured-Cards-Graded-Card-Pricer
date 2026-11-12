@@ -12,7 +12,7 @@ const CACHE_VER = 'v4';
 const CACHE_MS = 15 * 60 * 1000;
 const EMBED_WAIT_MS = 45000;
 const MOBILE_W = 390;
-const ORDER = ['ebay', 'ppt', '130point', 'terapeak', 'pricecharting', 'snkrdunk', 'cardladder', 'alt'];
+const ORDER = ['ebay', 'ppt', 'terapeak', 'pricecharting', 'snkrdunk', 'cardladder', 'alt'];
 const COMMON_GRADES = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS Black Label 10', 'BGS 10', 'BGS 9.5', 'BGS 9', 'CGC Pristine 10', 'CGC 10', 'CGC 9.5', 'CGC 9', 'SGC 10', 'TAG 10'];
 const GRADE_BAR = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS 10', 'BGS 9.5', 'BGS 9', 'CGC Pristine 10', 'CGC 10', 'CGC 9.5', 'SGC 10', 'TAG 10'];
 
@@ -405,9 +405,7 @@ function renderSource(id) {
   if (r.status === 'error') {
     noteText = r.blocked && id === 'ebay'
       ? 'eBay turned away the panel’s background request. Click “Open sold results ↗”: the sales are read from that eBay tab as soon as it loads. (Or add eBay API keys in Settings.)'
-      : r.blocked && id === '130point'
-        ? '130point turned away the panel’s background request. Click “Search on 130point ↗”: it runs the search in that tab and the sales are read from it.'
-        : `${r.error}. Try Open ↗.`;
+      : `${r.error}. Try Open ↗.`;
   } else if (r.status === 'ok' && !counted.length && r.rejected.length) {
     noteText = `${r.rejected.length} listings found, none match this exact card and grade. Check “filtered out” below.`;
   } else if (id === 'ppt' && r.status === 'ok') {
@@ -425,8 +423,8 @@ function renderSource(id) {
   note.hidden = !noteText;
   note.className = 'pnote' + (r.status === 'error' ? ' err' : '');
   note.textContent = noteText;
-  const blockedCta = r.status === 'error' && r.blocked && (id === 'ebay' || id === '130point');
-  open.textContent = blockedCta ? (id === 'ebay' ? 'Open sold results ↗' : 'Search on 130point ↗') : 'Open ↗';
+  const blockedCta = r.status === 'error' && r.blocked && id === 'ebay';
+  open.textContent = blockedCta ? 'Open sold results ↗' : 'Open ↗';
   open.classList.toggle('cta', blockedCta);
   if (blockedCta && !node.dataset.autoOpened) { node.dataset.autoOpened = '1'; node.querySelector('.src-body').hidden = false; node.classList.add('open'); }
   const ph = node.querySelector('.phone');
@@ -566,14 +564,6 @@ chrome.runtime.onMessage.addListener((msg) => {
     Object.assign(r, { status: 'ok', blocked: false, raw: all, pageUrl: msg.url, note: `Read from your open eBay tab (${all.length} listings). Open the next results page to add more.` });
     cachePut('ebay', state.query, { url: msg.url, sales: all }).catch(() => {});
     reclassify();
-  } else if (msg.type === '130-page-sales') {
-    const r = state.src['130point'];
-    if (!r || !state.parts) return;
-    if (state.parts.keyWord && !msg.query.toLowerCase().includes(state.parts.keyWord.toLowerCase())) return;
-    const sales = msg.sales.map(x => ({ ...x, date: new Date(x.date) }));
-    Object.assign(r, { status: 'ok', blocked: false, raw: sales, pageUrl: msg.url, note: 'Read from your open 130point tab.' });
-    cachePut('130point', state.query, { url: msg.url, sales }).catch(() => {});
-    reclassify();
   } else if (msg.type === 'companions-changed') {
     refreshConnected();
   } else if (msg.type === 'cert-page-info') {
@@ -600,7 +590,7 @@ async function takePending() {
 // ================================================================ aggregation
 // ---------------------------------------------------------------- one entry per real sale
 // Pass 1: the same eBay item number from several sources is one sale.
-// Pass 2: sources that don't carry item numbers (Card Ladder, Alt, some 130point / PriceCharting rows) are matched on
+// Pass 2: sources that don't carry item numbers (Card Ladder, Alt, some PriceCharting rows) are matched on
 // same day (±1, time zones), same price (exact in the same currency, within 2.5% after conversion) and similar title.
 // Two sales from the SAME source are never merged (sellers do sell two copies the same day), nor are two different
 // item numbers.
@@ -1080,7 +1070,7 @@ function renderGradesTable() {
   const now = new Date();
   const byGrade = {};
   const seen = new Set();
-  for (const id of ['ebay', '130point', 'pricecharting']) {
+  for (const id of ['ebay', 'ppt', 'pricecharting']) {
     const r = state.src[id];
     if (!r || !r.raw) continue;
     for (const s of r.raw) {

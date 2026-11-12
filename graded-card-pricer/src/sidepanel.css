@@ -256,3 +256,11 @@ main { padding: 14px; gap: 14px; }
 .offer-chip:disabled { opacity: .5; cursor: default; }
 .offer .deal { margin-top: 10px; }
 .offer .verdict { display: block; margin-top: 6px; white-space: normal; }
+
+/* ------------------------------------------------ v5.2: boxes grow to fit their text (no clipping) */
+.tile, .ks, .popstats .ks { height: auto; overflow: visible; }
+.tile { min-height: 104px; }
+.ks, .popstats .ks { min-height: 62px; }
+.tile .avg, .ks b { height: auto; }
+.ks small, .tile .sub { white-space: normal; overflow: visible; }
+.ks span { white-space: normal; }

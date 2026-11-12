@@ -26,7 +26,7 @@
 
   <h2>Currency</h2>
   <p class="help">All prices are shown in Canadian dollars. eBay is searched on <b>eBay.ca</b>. Alt and Card Ladder show CAD if you set CAD in
-    your account there. Prices in other currencies (PriceCharting and 130point in US$, SNKRDUNK in ¥) are
+    your account there. Prices in other currencies (PriceCharting, Terapeak, Alt and Card Ladder in US$, SNKRDUNK in ¥) are
     converted at the Bank of Canada daily rate and marked “≈”. Every matching sale counts, best offers included.</p>
   <div class="row"><span class="name">eBay.ca sellers</span>
     <select id="ebayLocation"><option value="all">All sellers (eBay.ca default, prices in CAD)</option><option value="canada">Canada-only sellers</option></select></div>
@@ -34,7 +34,7 @@
   <h2>API keys <span class="muted" style="text-transform:none;letter-spacing:0">(stored on this computer only)</span></h2>
   <p class="help"><b>eBay:</b> your Production App ID and Cert ID (developer.ebay.com → Application Keys) power the
     <b>Current listings</b> section (cheapest matching Buy It Now listings on eBay.ca) through eBay's standard listings API. eBay has closed
-    its sold-items API (Marketplace Insights) to new apps, so sold prices come from the eBay.ca website, Terapeak (connect it in the panel) and 130point.</p>
+    its sold-items API (Marketplace Insights) to new apps, so sold prices come from the eBay.ca website, Terapeak (connect it in the panel), PriceCharting and the other sources.</p>
   <div class="row"><span class="name">eBay App ID</span><input type="text" id="ebayAppId" placeholder="Client ID" autocomplete="off" spellcheck="false"></div>
   <div class="row"><span class="name">eBay Cert ID</span><input type="password" id="ebayCertId" placeholder="Client Secret" autocomplete="off"></div>
   <div class="row"><span class="name"></span><button class="ghost" id="testEbay" type="button">Test eBay key</button><span id="ebayResult" class="muted"></span></div>
